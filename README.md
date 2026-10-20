@@ -8,7 +8,7 @@ Este repositório está organizado para ser publicado na raiz do subdomínio `ad
 /
 ├── index.html                         # Página geral Publiai Ads
 ├── politica-de-privacidade/index.html # Política compartilhada
-└── carrecon/                           # Painel KRCON
+└── krcon/                              # Painel KRCON
     ├── index.html
     ├── assets/
     └── api/
@@ -18,19 +18,19 @@ URLs planejadas:
 
 - Página pública e OAuth: `https://ads.publiai.com.br/`
 - Política de privacidade: `https://ads.publiai.com.br/politica-de-privacidade/`
-- Painel KRCON: `https://ads.publiai.com.br/carrecon/`
+- Painel KRCON: `https://ads.publiai.com.br/krcon/`
 - Próximos clientes: `https://ads.publiai.com.br/cliente-xpto/`, `https://ads.publiai.com.br/cliente-c/` etc.
 
 ## Publicar pela Hostinger
 
 1. Configure a implantação GitHub da Hostinger para publicar o repositório em `domains/publiai.com.br/public_html/ads`.
 2. Ative HTTPS/SSL para `ads.publiai.com.br`.
-3. Antes de inserir credenciais de anúncios, proteja a pasta `carrecon` com **Directory Privacy/Proteção de diretório** no hPanel da Hostinger. Faça o mesmo para cada pasta de cliente. Sem esse controle, qualquer pessoa que alcançar o endereço consegue consultar os relatórios pela API.
-4. Crie `ads-dashboard-secrets.php` em `domains/publiai.com.br/`, fora de `public_html`, com o formato descrito em `carrecon/api/README.md`.
+3. Antes de inserir credenciais de anúncios, proteja a pasta `krcon` com **Directory Privacy/Proteção de diretório** no hPanel da Hostinger. Faça o mesmo para cada pasta de cliente. Sem esse controle, qualquer pessoa que alcançar o endereço consegue consultar os relatórios pela API.
+4. Crie `ads-dashboard-secrets.php` em `domains/publiai.com.br/`, fora de `public_html`, com o formato descrito em `krcon/api/README.md`.
 5. Cadastre apenas os IDs e tokens de cada cliente na entrada correspondente a seu slug. Não envie o arquivo de segredos ao GitHub.
 6. Abra `/` e `/politica-de-privacidade/` em uma janela sem login para confirmar que estão públicas. Teste os painéis com as credenciais configuradas.
 
-O painel KRCON está pronto em `/carrecon/`. Para acrescentar um cliente, copie essa pasta com o novo slug, edite `data-account-name`, `data-client-brand` e o logotipo em `index.html`, proteja a nova pasta na Hostinger e adicione as credenciais do cliente ao mapa privado do servidor. A API usa o slug da pasta para selecionar somente a entrada correspondente; IDs de conta enviados pelo navegador são ignorados.
+O painel KRCON está pronto em `/krcon/`. Para acrescentar um cliente, copie essa pasta com o novo slug, edite `data-account-name`, `data-client-brand` e o logotipo em `index.html`, proteja a nova pasta na Hostinger e adicione as credenciais do cliente ao mapa privado do servidor. A API usa o slug da pasta para selecionar somente a entrada correspondente; IDs de conta enviados pelo navegador são ignorados.
 
 ## OAuth / Google Cloud
 

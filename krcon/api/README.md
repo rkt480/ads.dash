@@ -1,10 +1,10 @@
 # API de relatórios por cliente
 
-Esta API é o limite do servidor para consultas de Meta Ads e Google Ads. O navegador chama `GET /carrecon/api/v1/report.php?period=30d`; tokens e IDs de conta nunca são enviados ao navegador.
+Esta API é o limite do servidor para consultas de Meta Ads e Google Ads. O navegador chama `GET /krcon/api/v1/report.php?period=30d`; tokens e IDs de conta nunca são enviados ao navegador.
 
 ## Isolamento por cliente
 
-- O cliente é resolvido pelo segmento de URL imediatamente anterior a `/api/`. Exemplos: `/carrecon/api/v1/report.php` e `/cliente-xpto/api/v1/report.php`.
+- O cliente é resolvido pelo segmento de URL imediatamente anterior a `/api/`. Exemplos: `/krcon/api/v1/report.php` e `/cliente-xpto/api/v1/report.php`.
 - O servidor procura as credenciais somente na entrada correspondente do mapa privado `tenants[slug]`.
 - Nenhum ID de conta vindo da URL, formulário ou navegador é aceito.
 - Cache e limite de requisições são separados por cliente.
@@ -21,7 +21,7 @@ O arquivo deve retornar um mapa por cliente. Exemplo com valores fictícios:
 <?php
 return [
     'tenants' => [
-        'carrecon' => [
+        'krcon' => [
             'GOOGLE_CLIENT_ID' => 'CLIENT_ID_AQUI',
             'GOOGLE_CLIENT_SECRET' => 'CLIENT_SECRET_AQUI',
             'GOOGLE_REFRESH_TOKEN' => 'REFRESH_TOKEN_AQUI',
@@ -40,7 +40,7 @@ return [
 ];
 ```
 
-O slug `carrecon` é a pasta `/carrecon/`. Para cadastrar outro cliente, crie a pasta com o slug correspondente e uma entrada independente no mapa. Não copie as credenciais de um cliente para outro. Variáveis de ambiente também podem ser específicas por cliente, no formato `ADS_CARRECON_GOOGLE_CLIENT_ID`, `ADS_CLIENTE_XPTO_GOOGLE_CLIENT_ID` etc. Para manter compatibilidade com a primeira instalação, variáveis antigas sem prefixo são lidas apenas para `carrecon`.
+O slug `krcon` é a pasta `/krcon/`. Para cadastrar outro cliente, crie a pasta com o slug correspondente e uma entrada independente no mapa. Não copie as credenciais de um cliente para outro. Variáveis de ambiente também podem ser específicas por cliente, no formato `ADS_KRCON_GOOGLE_CLIENT_ID`, `ADS_CLIENTE_XPTO_GOOGLE_CLIENT_ID` etc. Para manter compatibilidade com a primeira instalação, variáveis antigas sem prefixo são lidas apenas para `krcon`.
 
 O caminho do arquivo pode ser definido pela variável `ADS_PRIVATE_CONFIG_FILE`, desde que esteja fora de `public_html`. Sem ela, a API procura o arquivo no diretório acima de `public_html` na Hostinger ou acima do `DOCUMENT_ROOT` em outros ambientes.
 

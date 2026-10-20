@@ -208,7 +208,7 @@ function api_env(string $name): ?string
     if (!is_string($privateValue) || trim($privateValue) === '') {
         // Backward compatibility for the first KRCON deployment only. New
         // clients must use their own key under tenants[slug] or ADS_SLUG_KEY.
-        if ($tenantSlug !== 'carrecon') {
+        if ($tenantSlug !== 'krcon') {
             return null;
         }
         $legacyEnvironmentValue = getenv($name);

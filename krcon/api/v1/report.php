@@ -18,7 +18,15 @@ if (!in_array($period, $allowedPeriods, true)) {
 }
 
 $cacheDirectory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'krcon-report-cache';
-$cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR . 'report-' . $tenantSlug . '-v2-' . $period . '.json';
+$cacheAccountScope = implode("\0", [
+    $tenantSlug,
+    api_env('META_AD_ACCOUNT_ID') ?? '',
+    api_env('GOOGLE_CUSTOMER_ID') ?? '',
+    api_env('GOOGLE_LOGIN_CUSTOMER_ID') ?? '',
+]);
+$cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
+$cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v3-' . $period . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {

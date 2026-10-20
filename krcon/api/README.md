@@ -7,9 +7,10 @@ Esta API é o limite do servidor para consultas de Meta Ads e Google Ads. O nave
 - O cliente é resolvido pelo segmento de URL imediatamente anterior a `/api/`. Exemplos: `/krcon/api/v1/report.php` e `/cliente-xpto/api/v1/report.php`.
 - O servidor procura as credenciais somente na entrada correspondente do mapa privado `tenants[slug]`.
 - Nenhum ID de conta vindo da URL, formulário ou navegador é aceito.
-- Cache e limite de requisições são separados por cliente.
+- Cache e limite de requisições são separados por slug e IDs de conta configurados; não reutilize um slug para outro cliente.
 - O relatório é somente leitura. Google Ads usa `search`; Meta Ads usa Insights.
-- Os relatórios ficam disponíveis a quem consegue acessar o endereço e a API. Ative proteção por senha no diretório de cada cliente na Hostinger antes de adicionar credenciais reais.
+- O dashboard foi projetado sem login para o cliente. Qualquer pessoa que conheça ou descubra o endereço de um slug pode abrir a página e consultar as métricas desse slug, inclusive chamando diretamente a API JSON. Não há uma lista de clientes no site, mas isso não é controle de acesso.
+- A chamada do navegador recebe os dados do relatório, não os tokens nem segredos usados pelo servidor para consultar Meta e Google.
 
 ## Arquivo privado de configuração
 
@@ -49,7 +50,7 @@ O caminho do arquivo pode ser definido pela variável `ADS_PRIVATE_CONFIG_FILE`,
 - Métodos aceitos: somente `GET`.
 - Períodos aceitos: `7d`, `30d`, `90d`, `this_month`, `last_month`.
 - Limite: 30 solicitações por minuto por endereço cliente e por slug.
-- Cache: cinco minutos por cliente e período.
+- Cache: cinco minutos por slug, IDs de conta configurados e período. A chave contém um hash dos IDs de conta, nunca tokens ou segredos.
 - Respostas não incluem credenciais nem detalhes de erro upstream.
 - O OAuth refresh token deve ser removido do arquivo privado quando a integração for revogada.
 

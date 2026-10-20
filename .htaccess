@@ -1,0 +1,7 @@
+Options -Indexes
+
+# Do not serve repository notes or local configuration files from the website.
+<FilesMatch "(^\.|\.md$|\.log$|\.sql$|\.bak$|secrets\.php$|\.json$)">
+  Require all denied
+</FilesMatch>
+

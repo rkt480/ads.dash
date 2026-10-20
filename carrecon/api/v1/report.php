@@ -1,0 +1,56 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../bootstrap.php';
+require_once __DIR__ . '/../src/ReadOnlyReportService.php';
+
+api_require_method('GET');
+$tenantSlug = $GLOBALS['api_tenant_slug'] ?? null;
+if (!is_string($tenantSlug)) {
+    api_json(404, ['error' => 'tenant_not_found']);
+}
+api_enforce_rate_limit(30, 60);
+
+$allowedPeriods = ['7d', '30d', '90d', 'this_month', 'last_month'];
+$period = isset($_GET['period']) && is_string($_GET['period']) ? $_GET['period'] : '30d';
+if (!in_array($period, $allowedPeriods, true)) {
+    api_json(400, ['error' => 'invalid_period']);
+}
+
+$cacheDirectory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'krcon-report-cache';
+$cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR . 'report-' . $tenantSlug . '-v2-' . $period . '.json';
+$cacheTtl = 300;
+if (is_file($cacheFile) && is_readable($cacheFile)
+    && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
+    $cached = json_decode((string) file_get_contents($cacheFile), true);
+    if (is_array($cached)) {
+        api_json(200, $cached);
+    }
+}
+
+try {
+    $report = (new ReadOnlyReportService())->getReport($period);
+    $payload = ['data' => $report];
+    $hasConnectedPlatform = in_array('connected', $report['integrations'] ?? [], true);
+    if ($hasConnectedPlatform) {
+        if (!is_dir($cacheDirectory)) {
+            @mkdir($cacheDirectory, 0700, true);
+        }
+        if (is_dir($cacheDirectory) && is_writable($cacheDirectory)) {
+            @chmod($cacheDirectory, 0700);
+            @file_put_contents(
+                $cacheFile,
+                json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                LOCK_EX
+            );
+            @chmod($cacheFile, 0600);
+        }
+    }
+    api_json(200, $payload);
+} catch (IntegrationNotConfigured $error) {
+    api_json(503, ['error' => 'integration_not_configured']);
+} catch (Throwable $error) {
+    // Do not return upstream messages, request URLs, or credentials to the browser.
+    error_log('KRCON report API failed; request_id=' . bin2hex(random_bytes(8)));
+    api_json(502, ['error' => 'report_unavailable']);
+}

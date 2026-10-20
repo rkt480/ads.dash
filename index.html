@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111a2b">
+  <meta name="description" content="Publiai Ads reúne dashboards independentes para acompanhar resultados de campanhas digitais.">
+  <title>Publiai Ads — Painéis de anúncios</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18243a; background: #f4f6fa; }
+    * { box-sizing: border-box; }
+    body { min-width: 320px; margin: 0; }
+    a { color: inherit; }
+    .page { min-height: 100vh; display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px max(24px, calc((100vw - 1080px) / 2)); border-bottom: 1px solid #e4e8f0; background: #fff; }
+    .brand { color: #1b2942; font-size: 18px; font-weight: 760; letter-spacing: -.04em; text-decoration: none; }
+    .brand span { color: #587ce0; }
+    nav a { color: #58677f; font-size: 13px; text-decoration: none; }
+    main { width: min(100% - 40px, 920px); margin: auto; padding: 76px 0 90px; }
+    .eyebrow { margin: 0 0 12px; color: #5979cf; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { max-width: 760px; margin: 0; color: #18243a; font-size: clamp(38px, 7vw, 64px); line-height: 1.02; letter-spacing: -.06em; }
+    .intro { max-width: 680px; margin: 22px 0 0; color: #64728a; font-size: 17px; line-height: 1.7; }
+    .card { max-width: 760px; margin-top: 42px; padding: 25px 27px; border: 1px solid #e1e6ef; border-radius: 16px; background: #fff; box-shadow: 0 12px 35px rgba(23, 35, 58, .05); }
+    h2 { margin: 0 0 9px; font-size: 17px; letter-spacing: -.02em; }
+    .card p { margin: 0; color: #64728a; font-size: 14px; line-height: 1.7; }
+    .privacy { display: inline-block; margin-top: 18px; color: #4268cf; font-size: 13px; font-weight: 650; }
+    footer { display: flex; justify-content: space-between; gap: 16px; padding: 22px max(24px, calc((100vw - 1080px) / 2)); border-top: 1px solid #e4e8f0; color: #8995a8; background: #fff; font-size: 12px; }
+    footer a { color: #52627b; }
+    @media (max-width: 600px) { header, footer { padding-right: 20px; padding-left: 20px; } main { padding-top: 52px; } .card { padding: 20px; } footer { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="brand" href="/" aria-label="Publiai Ads, página inicial">publiai<span>ads</span></a>
+      <nav><a href="/politica-de-privacidade/">Privacidade</a></nav>
+    </header>
+    <main>
+      <p class="eyebrow">Publiai Ads</p>
+      <h1>Painéis de anúncios, organizados por cliente.</h1>
+      <p class="intro">A Publiai Ads oferece dashboards independentes para acompanhar resultados de campanhas digitais. Cada painel consulta as contas configuradas para seu cliente e apresenta métricas como investimento, cliques, impressões e conversões.</p>
+      <section class="card" aria-labelledby="about-title">
+        <h2 id="about-title">Sobre o KRCON Dashboard Ads</h2>
+        <p>O KRCON Dashboard Ads é um dos painéis da plataforma. Ele consulta relatórios do Google Ads e, quando configurado, do Meta Ads. O acesso às APIs é usado para exibir métricas; o painel não cria, edita ou remove campanhas.</p>
+        <a class="privacy" href="/politica-de-privacidade/">Leia a Política de Privacidade</a>
+      </section>
+    </main>
+    <footer><span>Publiai Ads · Dashboards de campanhas digitais</span><a href="/politica-de-privacidade/">Política de Privacidade</a></footer>
+  </div>
+</body>
+</html>

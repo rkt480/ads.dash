@@ -1,0 +1,9 @@
+# Local/private credentials must never be committed.
+ads-dashboard-secrets.php
+krcon-secrets.php
+.env
+.env.*
+*.oauth.json
+client_secret_*.json
+application_default_credentials.json
+

@@ -1,0 +1,9 @@
+Options -Indexes
+
+<Files "bootstrap.php">
+  Require all denied
+</Files>
+
+<Files "README.md">
+  Require all denied
+</Files>

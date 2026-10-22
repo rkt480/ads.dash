@@ -185,7 +185,8 @@
     if (!raw) return "Resultado da campanha";
     const normalized = raw.toLocaleLowerCase("pt-BR")
       .replace(/^(actions?|conversions?):/, "")
-      .replace(/[.\s-]+/g, "_");
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
     const labels = {
       link_click: "Cliques no link",
       link_clicks: "Cliques no link",
@@ -197,36 +198,81 @@
       page_engagements: "Engajamentos com a página",
       lead: "Leads",
       leads: "Leads",
+      on_facebook_lead: "Leads por formulário instantâneo",
+      on_facebook_leads: "Leads por formulário instantâneo",
+      leads_on_facebook: "Leads por formulário instantâneo",
+      leads_no_facebook: "Leads por formulário instantâneo",
+      facebook_leads: "Leads por formulário instantâneo",
+      lead_form: "Leads por formulário instantâneo",
+      lead_forms: "Leads por formulário instantâneo",
+      instant_form_leads: "Leads por formulário instantâneo",
+      lead_form_submissions: "Leads por formulário instantâneo",
+      onsite_conversion_lead: "Leads por formulário instantâneo",
+      onsite_conversion_leads: "Leads por formulário instantâneo",
       offsite_conversion_fb_pixel_lead: "Leads",
-      onsite_conversion_lead_grouped: "Leads",
-      onsite_conversion_lead: "Leads",
+      onsite_conversion_lead_grouped: "Leads por formulário instantâneo",
+      onsite_conversion_leadgen_grouped: "Leads por formulário instantâneo",
+      website_lead: "Leads no site",
+      website_leads: "Leads no site",
       purchase: "Compras",
+      purchases: "Compras",
       omni_purchase: "Compras",
       offsite_conversion_fb_pixel_purchase: "Compras no site",
+      website_purchases: "Compras no site",
       onsite_conversion_purchase: "Compras",
       onsite_conversion_messaging_conversation_started_7d: "Conversas por mensagem iniciadas",
       messaging_conversation_started_7d: "Conversas por mensagem iniciadas",
       messaging_conversations_started: "Conversas por mensagem iniciadas",
       onsite_conversion_total_messaging_connection: "Conexões por mensagem",
       page_like: "Curtidas na página",
+      page_likes: "Curtidas na página",
       post_reaction: "Reações à publicação",
+      post_reactions: "Reações à publicação",
       post_save: "Salvamentos da publicação",
+      post_saves: "Salvamentos da publicação",
       video_view: "Visualizações de vídeo",
       video_views: "Visualizações de vídeo",
       thruplay: "ThruPlays",
+      reach: "Alcance",
+      impressions: "Impressões",
       complete_registration: "Cadastros concluídos",
+      completed_registrations: "Cadastros concluídos",
       onsite_conversion_complete_registration: "Cadastros concluídos",
       add_to_cart: "Adições ao carrinho",
       initiate_checkout: "Finalizações de compra iniciadas",
+      app_install: "Instalações do aplicativo",
+      app_installs: "Instalações do aplicativo",
+      mobile_app_install: "Instalações do aplicativo",
       contact: "Contatos",
+      contacts: "Contatos",
       schedule: "Agendamentos",
+      appointments_scheduled: "Agendamentos",
       subscribe: "Assinaturas",
       content_view: "Visualizações de conteúdo",
-      search: "Pesquisas"
+      search: "Pesquisas",
+      event_response: "Respostas ao evento",
+      event_responses: "Respostas ao evento",
+      profile_visit: "Visitas ao perfil",
+      profile_visits: "Visitas ao perfil"
     };
     if (labels[normalized]) return labels[normalized];
-    if (/[^a-z0-9_.:-]/i.test(raw)) return raw;
-    return raw.replace(/^(actions?|conversions?):/i, "").replace(/[._-]+/g, " ");
+    if (normalized.includes("lead")) {
+      if (normalized.includes("website") || normalized.includes("offsite") || normalized.includes("pixel")) return "Leads no site";
+      if (normalized.includes("onsite") || normalized.includes("form") || normalized.includes("facebook")) return "Leads por formulário instantâneo";
+      return "Leads";
+    }
+    if (normalized.includes("purchase")) return normalized.includes("website") || normalized.includes("offsite") ? "Compras no site" : "Compras";
+    if (normalized.includes("message") || normalized.includes("conversation")) return "Conversas por mensagem iniciadas";
+    if (normalized.includes("landing_page") && normalized.includes("view")) return "Visualizações da página de destino";
+    if (normalized.includes("link") && normalized.includes("click")) return "Cliques no link";
+    if (normalized.includes("engagement")) return "Engajamentos com a publicação";
+    if (normalized.includes("video") || normalized.includes("thruplay")) return "Visualizações de vídeo";
+    if (normalized.includes("profile") && normalized.includes("visit")) return "Visitas ao perfil";
+    if (normalized.includes("install")) return "Instalações do aplicativo";
+    if (normalized.includes("reach")) return "Alcance";
+    if (normalized.includes("impression")) return "Impressões";
+    if (/[áàâãéêíóôõúç]/i.test(raw)) return raw;
+    return "Resultado da campanha";
   }
 
   function campaignOutcome(row) {

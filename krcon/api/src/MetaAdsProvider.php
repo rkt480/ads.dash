@@ -28,7 +28,7 @@ final class MetaAdsProvider
         $params = [
             'level' => 'campaign',
             'time_range' => json_encode($range, JSON_UNESCAPED_SLASHES),
-            'fields' => 'campaign_id,campaign_name,spend,impressions,clicks,actions,results,cost_per_action_type,ctr,date_start,date_stop',
+            'fields' => 'campaign_id,campaign_name,objective,spend,impressions,clicks,actions,results,cost_per_action_type,ctr,date_start,date_stop',
             'limit' => '500',
         ];
         $campaigns = [];
@@ -47,7 +47,10 @@ final class MetaAdsProvider
             }
             foreach ($rows as $row) {
                 if (is_array($row)) {
-                    $campaigns[] = $this->normalizeCampaign($row);
+                    $campaign = $this->normalizeCampaign($row);
+                    if ($this->hasReportData($campaign)) {
+                        $campaigns[] = $campaign;
+                    }
                 }
             }
 
@@ -67,6 +70,18 @@ final class MetaAdsProvider
     private function normalizeCampaign(array $row): array
     {
         $actions = is_array($row['actions'] ?? null) ? $row['actions'] : [];
+        $objective = (string) ($row['objective'] ?? '');
+        $results = $this->normalizeResults($row['results'] ?? $row['objective_results'] ?? []);
+        $resultType = (string) ($results[0]['type'] ?? '');
+        if ($this->isLeadObjective($objective) || $this->isLeadResultType($resultType)) {
+            $leadResult = $this->leadResultFromActions($actions);
+            if ($leadResult !== null && ($results === [] || ($results[0]['value'] ?? 0) <= 0)) {
+                $results = [$leadResult];
+            } elseif ($results === [] && $this->isLeadObjective($objective)) {
+                $results = [['type' => 'onsite_conversion.lead_grouped', 'value' => 0.0]];
+            }
+        }
+
         return [
             'id' => (string) ($row['campaign_id'] ?? ''),
             'name' => (string) ($row['campaign_name'] ?? 'Campanha sem nome'),
@@ -76,7 +91,7 @@ final class MetaAdsProvider
             'clicks' => (int) $this->number($row['clicks'] ?? 0),
             'ctr' => $this->number($row['ctr'] ?? 0),
             'actions' => $actions,
-            'results' => $this->normalizeResults($row['results'] ?? $row['objective_results'] ?? []),
+            'results' => $results,
             'cost_per_action_type' => is_array($row['cost_per_action_type'] ?? null)
                 ? $row['cost_per_action_type'] : [],
             'date_start' => (string) ($row['date_start'] ?? ''),
@@ -90,39 +105,116 @@ final class MetaAdsProvider
             return [];
         }
 
+        $first = null;
         foreach ($results as $result) {
             if (!is_array($result)) {
                 continue;
             }
 
-            $value = $result['value'] ?? null;
-            if (!is_numeric($value) && is_array($result['values'] ?? null)) {
+            $valueCandidates = [];
+            if (is_numeric($result['value'] ?? null)) {
+                $valueCandidates[] = $result['value'];
+            }
+            if (is_array($result['values'] ?? null)) {
                 foreach ($result['values'] as $resultValue) {
                     if (is_array($resultValue) && is_numeric($resultValue['value'] ?? null)) {
-                        $value = $resultValue['value'];
-                        break;
+                        $valueCandidates[] = $resultValue['value'];
+                    } elseif (is_numeric($resultValue)) {
+                        $valueCandidates[] = $resultValue;
                     }
                 }
             }
-            if (!is_numeric($value)) {
+            if ($valueCandidates === []) {
                 continue;
+            }
+            $value = $valueCandidates[0];
+            foreach ($valueCandidates as $candidateValue) {
+                if ($this->number($candidateValue) != 0) {
+                    $value = $candidateValue;
+                    break;
+                }
             }
 
             $type = '';
-            foreach (['title', 'indicator', 'name', 'id', 'description'] as $typeField) {
+            foreach (['indicator', 'title', 'name', 'id', 'description'] as $typeField) {
                 $candidate = $result[$typeField] ?? null;
                 if (is_string($candidate) && trim($candidate) !== '') {
                     $type = $candidate;
                     break;
                 }
             }
-            return [[
+            $normalized = [
                 'type' => $type,
                 'value' => $this->number($value),
-            ]];
+            ];
+            if ($normalized['value'] != 0) {
+                return [$normalized];
+            }
+            $first ??= $normalized;
         }
 
-        return [];
+        return $first === null ? [] : [$first];
+    }
+
+    private function isLeadObjective(string $objective): bool
+    {
+        return stripos($objective, 'lead') !== false;
+    }
+
+    private function isLeadResultType(string $type): bool
+    {
+        return stripos($type, 'lead') !== false;
+    }
+
+    private function leadResultFromActions(array $actions): ?array
+    {
+        $leadTypes = [
+            'onsite_conversion.lead_grouped',
+            'onsite_conversion.leadgen_grouped',
+            'onsite_conversion.lead',
+            'lead',
+            'offsite_conversion.fb_pixel_lead',
+        ];
+        $firstMatch = null;
+        foreach ($leadTypes as $leadType) {
+            foreach ($actions as $action) {
+                if (!is_array($action)) {
+                    continue;
+                }
+                $actionType = strtolower((string) ($action['action_type'] ?? ''));
+                if ($actionType !== $leadType
+                    && strncmp($actionType, $leadType . '.', strlen($leadType) + 1) !== 0) {
+                    continue;
+                }
+                $result = [
+                    'type' => $leadType,
+                    'value' => $this->number($action['value'] ?? 0),
+                ];
+                if ($result['value'] != 0) {
+                    return $result;
+                }
+                $firstMatch ??= $result;
+            }
+        }
+        return $firstMatch;
+    }
+
+    private function hasReportData(array $campaign): bool
+    {
+        foreach (['spend', 'impressions', 'clicks', 'ctr'] as $metric) {
+            if (($campaign[$metric] ?? 0) != 0) {
+                return true;
+            }
+        }
+        if (($campaign['results'][0]['value'] ?? 0) != 0) {
+            return true;
+        }
+        foreach ($campaign['actions'] ?? [] as $action) {
+            if (is_array($action) && $this->number($action['value'] ?? 0) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function totals(array $campaigns): array

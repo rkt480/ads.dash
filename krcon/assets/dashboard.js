@@ -27,6 +27,7 @@
     style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2
   }).format(Number(value) || 0);
   const integer = value => new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(Number(value) || 0);
+  const decimal = value => new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(Number(value) || 0);
   const percent = value => (Number(value) || 0).toLocaleString("pt-BR", {
     minimumFractionDigits: 2, maximumFractionDigits: 2
   }) + "%";
@@ -50,6 +51,7 @@
       const rows = report[key]?.campaigns;
       if (!Array.isArray(rows)) return;
       rows.forEach((row, index) => {
+        const metaResult = Array.isArray(row.results) ? row.results[0] : null;
         result.push({
           id: key + "-" + String(row.id || index),
           name: String(row.name || "Campanha sem nome"),
@@ -60,7 +62,11 @@
           impressions: Number(row.impressions) || 0,
           clicks: Number(row.clicks) || 0,
           ctr: Number(row.ctr) || 0,
-          conversions: Number(row.conversions) || 0
+          conversions: Number(row.conversions) || 0,
+          result: metaResult && typeof metaResult === "object" ? {
+            type: String(metaResult.type || ""),
+            value: Number(metaResult.value) || 0
+          } : null
         });
       });
     });
@@ -174,6 +180,79 @@
     }).join("") + '</div>';
   }
 
+  function resultTypeLabel(type) {
+    const raw = String(type || "").trim();
+    if (!raw) return "Resultado da campanha";
+    const normalized = raw.toLocaleLowerCase("pt-BR")
+      .replace(/^(actions?|conversions?):/, "")
+      .replace(/[.\s-]+/g, "_");
+    const labels = {
+      link_click: "Cliques no link",
+      link_clicks: "Cliques no link",
+      landing_page_view: "Visualizações da página de destino",
+      landing_page_views: "Visualizações da página de destino",
+      post_engagement: "Engajamentos com a publicação",
+      post_engagements: "Engajamentos com a publicação",
+      page_engagement: "Engajamentos com a página",
+      page_engagements: "Engajamentos com a página",
+      lead: "Leads",
+      leads: "Leads",
+      offsite_conversion_fb_pixel_lead: "Leads",
+      onsite_conversion_lead_grouped: "Leads",
+      onsite_conversion_lead: "Leads",
+      purchase: "Compras",
+      omni_purchase: "Compras",
+      offsite_conversion_fb_pixel_purchase: "Compras no site",
+      onsite_conversion_purchase: "Compras",
+      onsite_conversion_messaging_conversation_started_7d: "Conversas por mensagem iniciadas",
+      messaging_conversation_started_7d: "Conversas por mensagem iniciadas",
+      messaging_conversations_started: "Conversas por mensagem iniciadas",
+      onsite_conversion_total_messaging_connection: "Conexões por mensagem",
+      page_like: "Curtidas na página",
+      post_reaction: "Reações à publicação",
+      post_save: "Salvamentos da publicação",
+      video_view: "Visualizações de vídeo",
+      video_views: "Visualizações de vídeo",
+      thruplay: "ThruPlays",
+      complete_registration: "Cadastros concluídos",
+      onsite_conversion_complete_registration: "Cadastros concluídos",
+      add_to_cart: "Adições ao carrinho",
+      initiate_checkout: "Finalizações de compra iniciadas",
+      contact: "Contatos",
+      schedule: "Agendamentos",
+      subscribe: "Assinaturas",
+      content_view: "Visualizações de conteúdo",
+      search: "Pesquisas"
+    };
+    if (labels[normalized]) return labels[normalized];
+    if (/[^a-z0-9_.:-]/i.test(raw)) return raw;
+    return raw.replace(/^(actions?|conversions?):/i, "").replace(/[._-]+/g, " ");
+  }
+
+  function campaignOutcome(row) {
+    if (row.platform === "Google Ads") {
+      return { value: row.conversions, label: "Conversões" };
+    }
+    return {
+      value: row.result ? row.result.value : 0,
+      label: resultTypeLabel(row.result?.type)
+    };
+  }
+
+  function resultColumnTitle() {
+    if (state.platform === "Google Ads") return "Conversões";
+    if (state.platform === "Meta Ads") return "Resultados";
+    return "Resultados / conversões";
+  }
+
+  function campaignResultCell(row, showPlatform) {
+    const outcome = campaignOutcome(row);
+    const showLabel = showPlatform || state.platform === "Todas" || row.platform === "Meta Ads";
+    return '<td class="result-cell"><strong>' + decimal(outcome.value) + '</strong>'
+      + (showLabel ? '<span class="result-caption" title="' + escapeHtml(outcome.label) + '">' + escapeHtml(outcome.label) + '</span>' : '')
+      + '</td>';
+  }
+
   function spendDistribution() {
     const platforms = state.platform === "Todas" ? ["Meta Ads", "Google Ads"] : [state.platform];
     const rows = platforms.map(platform => {
@@ -198,7 +277,14 @@
 
   function campaignTable(rows, showPlatform) {
     if (!rows.length) return '<div class="table-empty">Nenhuma campanha retornada para estes filtros.</div>';
-    return '<div class="table-scroll"><table><thead><tr><th>Campanha</th>' + (showPlatform ? '<th>Plataforma</th>' : '') + '<th>Investimento</th><th>Cliques</th><th>Impressões</th><th>CTR</th></tr></thead><tbody>' + rows.map(row => '<tr class="campaign-row" tabindex="0" role="button" aria-label="Ver detalhes: ' + escapeHtml(row.name) + '" data-action="campaign" data-id="' + escapeHtml(row.id) + '"><td><div class="campaign-name">' + escapeHtml(row.name) + '</div>' + (row.objective ? '<div class="campaign-objective">' + escapeHtml(row.objective) + '</div>' : '') + '</td>' + (showPlatform ? '<td><span class="platform-badge ' + (row.platform === "Google Ads" ? "google" : "") + '"><i class="mini-dot"></i>' + escapeHtml(row.platform) + '</span></td>' : '') + '<td class="td-strong">' + money(row.spend) + '</td><td>' + integer(row.clicks) + '</td><td>' + integer(row.impressions) + '</td><td>' + percent(row.ctr) + '</td></tr>').join("") + '</tbody></table></div>';
+    return '<div class="table-scroll"><table><thead><tr><th>Campanha</th>'
+      + (showPlatform ? '<th>Plataforma</th>' : '')
+      + '<th>Investimento</th><th>Cliques</th><th>' + escapeHtml(resultColumnTitle()) + '</th><th>Impressões</th><th>CTR</th></tr></thead><tbody>'
+      + rows.map(row => '<tr class="campaign-row" tabindex="0" role="button" aria-label="Ver detalhes: ' + escapeHtml(row.name) + '" data-action="campaign" data-id="' + escapeHtml(row.id) + '"><td><div class="campaign-name">' + escapeHtml(row.name) + '</div>' + (row.objective ? '<div class="campaign-objective">' + escapeHtml(row.objective) + '</div>' : '') + '</td>'
+        + (showPlatform ? '<td><span class="platform-badge ' + (row.platform === "Google Ads" ? "google" : "") + '"><i class="mini-dot"></i>' + escapeHtml(row.platform) + '</span></td>' : '')
+        + '<td class="td-strong">' + money(row.spend) + '</td><td>' + integer(row.clicks) + '</td>' + campaignResultCell(row, showPlatform)
+        + '<td>' + integer(row.impressions) + '</td><td>' + percent(row.ctr) + '</td></tr>').join("")
+      + '</tbody></table></div>';
   }
 
   function filteredCampaigns() {
@@ -215,7 +301,7 @@
 
   function campaignsPage() {
     const filtered = filteredCampaigns().slice().sort((a, b) => b.spend - a.spend);
-    return pageHeading(state.platform === "Todas" ? "Campanhas" : "Campanhas · " + state.platform, "Pesquise as campanhas e compare investimento, cliques e impressões.") + connectionAlert() + platformFilters() + '<div class="campaign-toolbar"><label class="search-field"><svg viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><input id="campaignSearch" type="search" placeholder="Buscar campanha..." value="' + escapeHtml(state.query) + '" aria-label="Buscar campanha"></label><span class="filter-chip active" aria-live="polite">' + filtered.length + ' campanhas</span></div><section class="card table-card"><div class="card-heading"><div><h2 class="card-title">Campanhas da conta</h2><p class="card-subtitle">Clique em uma linha para abrir os indicadores</p></div></div>' + campaignTable(filtered, state.platform === "Todas") + '<div class="table-meta"><span>Mostrando ' + filtered.length + ' de ' + campaigns.length + ' campanhas carregadas</span><span class="table-hint">' + icon("info") + ' Métricas do período selecionado</span></div></section>';
+    return pageHeading(state.platform === "Todas" ? "Campanhas" : "Campanhas · " + state.platform, "Pesquise as campanhas e compare investimento, cliques, resultados e impressões.") + connectionAlert() + platformFilters() + '<div class="campaign-toolbar"><label class="search-field"><svg viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><input id="campaignSearch" type="search" placeholder="Buscar campanha..." value="' + escapeHtml(state.query) + '" aria-label="Buscar campanha"></label><span class="filter-chip active" aria-live="polite">' + filtered.length + ' campanhas</span></div><section class="card table-card"><div class="card-heading"><div><h2 class="card-title">Campanhas da conta</h2><p class="card-subtitle">Clique em uma linha para abrir os indicadores</p></div></div>' + campaignTable(filtered, state.platform === "Todas") + '<div class="table-meta"><span>Mostrando ' + filtered.length + ' de ' + campaigns.length + ' campanhas carregadas</span><span class="table-hint">' + icon("info") + ' Métricas do período selecionado</span></div></section>';
   }
 
   function comparePage() {

@@ -28,7 +28,7 @@ final class MetaAdsProvider
         $params = [
             'level' => 'campaign',
             'time_range' => json_encode($range, JSON_UNESCAPED_SLASHES),
-            'fields' => 'campaign_id,campaign_name,spend,impressions,clicks,actions,cost_per_action_type,ctr,date_start,date_stop',
+            'fields' => 'campaign_id,campaign_name,spend,impressions,clicks,actions,results,cost_per_action_type,ctr,date_start,date_stop',
             'limit' => '500',
         ];
         $campaigns = [];
@@ -76,11 +76,53 @@ final class MetaAdsProvider
             'clicks' => (int) $this->number($row['clicks'] ?? 0),
             'ctr' => $this->number($row['ctr'] ?? 0),
             'actions' => $actions,
+            'results' => $this->normalizeResults($row['results'] ?? $row['objective_results'] ?? []),
             'cost_per_action_type' => is_array($row['cost_per_action_type'] ?? null)
                 ? $row['cost_per_action_type'] : [],
             'date_start' => (string) ($row['date_start'] ?? ''),
             'date_stop' => (string) ($row['date_stop'] ?? ''),
         ];
+    }
+
+    private function normalizeResults($results): array
+    {
+        if (!is_array($results)) {
+            return [];
+        }
+
+        foreach ($results as $result) {
+            if (!is_array($result)) {
+                continue;
+            }
+
+            $value = $result['value'] ?? null;
+            if (!is_numeric($value) && is_array($result['values'] ?? null)) {
+                foreach ($result['values'] as $resultValue) {
+                    if (is_array($resultValue) && is_numeric($resultValue['value'] ?? null)) {
+                        $value = $resultValue['value'];
+                        break;
+                    }
+                }
+            }
+            if (!is_numeric($value)) {
+                continue;
+            }
+
+            $type = '';
+            foreach (['title', 'indicator', 'name', 'id', 'description'] as $typeField) {
+                $candidate = $result[$typeField] ?? null;
+                if (is_string($candidate) && trim($candidate) !== '') {
+                    $type = $candidate;
+                    break;
+                }
+            }
+            return [[
+                'type' => $type,
+                'value' => $this->number($value),
+            ]];
+        }
+
+        return [];
     }
 
     private function totals(array $campaigns): array

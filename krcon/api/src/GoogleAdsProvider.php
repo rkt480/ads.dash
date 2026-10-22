@@ -58,7 +58,10 @@ final class GoogleAdsProvider
         $campaigns = [];
         foreach ($rows as $row) {
             if (is_array($row)) {
-                $campaigns[] = $this->normalizeCampaign($row);
+                $campaign = $this->normalizeCampaign($row);
+                if ($this->hasReportData($campaign)) {
+                    $campaigns[] = $campaign;
+                }
             }
         }
 
@@ -122,6 +125,16 @@ final class GoogleAdsProvider
             $totals['conversions'] += $campaign['conversions'];
         }
         return $totals;
+    }
+
+    private function hasReportData(array $campaign): bool
+    {
+        foreach (['spend', 'impressions', 'clicks', 'conversions', 'ctr'] as $metric) {
+            if (($campaign[$metric] ?? 0) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function number($value): float

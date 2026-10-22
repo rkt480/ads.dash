@@ -14,8 +14,8 @@ final class ReportPeriod
 
         $today = new DateTimeImmutable('today', $timezone);
         if ($period === '7d') {
-            $start = $today->modify('-6 days');
-            $end = $today;
+            $end = $today->modify('-1 day');
+            $start = $end->modify('-6 days');
         } elseif ($period === '90d') {
             $start = $today->modify('-89 days');
             $end = $today;

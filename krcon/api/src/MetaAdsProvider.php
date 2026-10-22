@@ -61,10 +61,66 @@ final class MetaAdsProvider
             $after = $nextAfter;
         }
 
+        $statuses = $this->campaignStatuses($client, $accountId, $apiVersion, $token);
+        foreach ($campaigns as &$campaign) {
+            $campaign['status'] = $statuses[$campaign['id']] ?? '';
+        }
+        unset($campaign);
+
         return [
             'totals' => $this->totals($campaigns),
             'campaigns' => $campaigns,
         ];
+    }
+
+    private function campaignStatuses(
+        ServerHttpClient $client,
+        string $accountId,
+        string $apiVersion,
+        string $token
+    ): array {
+        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/campaigns';
+        $params = ['fields' => 'id,status,effective_status', 'limit' => '500'];
+        $statuses = [];
+        $after = null;
+
+        try {
+            for ($page = 0; $page < 20; $page++) {
+                if ($after !== null) {
+                    $params['after'] = $after;
+                }
+                $url = $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
+                $rows = $response['data'] ?? [];
+                if (!is_array($rows)) {
+                    break;
+                }
+                foreach ($rows as $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    $id = (string) ($row['id'] ?? '');
+                    if ($id === '') {
+                        continue;
+                    }
+                    $effectiveStatus = strtoupper((string) ($row['effective_status'] ?? ''));
+                    $statuses[$id] = $effectiveStatus !== ''
+                        ? $effectiveStatus
+                        : strtoupper((string) ($row['status'] ?? ''));
+                }
+
+                $nextAfter = $response['paging']['cursors']['after'] ?? null;
+                if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
+                    break;
+                }
+                $after = $nextAfter;
+            }
+        } catch (UpstreamApiFailure $error) {
+            // Keep report metrics available if the separate status lookup is unavailable.
+            return [];
+        }
+
+        return $statuses;
     }
 
     private function normalizeCampaign(array $row): array

@@ -7,9 +7,9 @@ require_once __DIR__ . '/ReportPeriod.php';
 
 final class ReadOnlyReportService
 {
-    public function getReport(string $period): array
+    public function getReport(string $period, ?array $customRange = null): array
     {
-        $range = ReportPeriod::range($period);
+        $range = ReportPeriod::range($period, $customRange);
         $metaResult = $this->readPlatform(
             static function () use ($range): array {
                 return (new MetaAdsProvider())->readInsights($range);

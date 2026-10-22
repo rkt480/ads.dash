@@ -12,6 +12,9 @@
     platform: "Todas",
     query: "",
     period: "30d",
+    customSince: "",
+    customUntil: "",
+    customApplied: false,
     collapsed: false,
     mobileOpen: false,
     selectedCampaign: null,
@@ -34,6 +37,9 @@
   const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[char]);
+  const hasValidCustomRange = () => /^\d{4}-\d{2}-\d{2}$/.test(state.customSince)
+    && /^\d{4}-\d{2}-\d{2}$/.test(state.customUntil)
+    && state.customSince <= state.customUntil;
 
   const icons = {
     investment: '<svg viewBox="0 0 24 24" fill="none"><path d="M4 7.5h16v12H4zM4 7.5l2-3h12l2 3M15.5 13.5h2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="13.5" r="1.2" fill="currentColor"/></svg>',
@@ -299,6 +305,22 @@
       + '</td>';
   }
 
+  function campaignStatus(row) {
+    const status = String(row.status || "").toUpperCase();
+    if (status === "ACTIVE" || status === "ENABLED") return { label: "Ativa", className: "active" };
+    if (status.includes("PAUSED") || status === "DISABLED") return { label: "Pausada", className: "paused" };
+    if (status === "ARCHIVED") return { label: "Arquivada", className: "inactive" };
+    if (status === "DELETED" || status === "REMOVED") return { label: "Removida", className: "inactive" };
+    if (status === "WITH_ISSUES") return { label: "Com problemas", className: "paused" };
+    if (status === "IN_PROCESS") return { label: "Em processamento", className: "unknown" };
+    return { label: "Não informado", className: "unknown" };
+  }
+
+  function campaignStatusCell(row) {
+    const status = campaignStatus(row);
+    return '<td><span class="status-badge ' + status.className + '">' + escapeHtml(status.label) + '</span></td>';
+  }
+
   function spendDistribution() {
     const platforms = state.platform === "Todas" ? ["Meta Ads", "Google Ads"] : [state.platform];
     const rows = platforms.map(platform => {
@@ -325,10 +347,10 @@
     if (!rows.length) return '<div class="table-empty">Nenhuma campanha retornada para estes filtros.</div>';
     return '<div class="table-scroll"><table><thead><tr><th>Campanha</th>'
       + (showPlatform ? '<th>Plataforma</th>' : '')
-      + '<th>Investimento</th><th>Cliques</th><th>' + escapeHtml(resultColumnTitle()) + '</th><th>Impressões</th><th>CTR</th></tr></thead><tbody>'
+      + '<th>Status</th><th>Investimento</th><th>Cliques</th><th>' + escapeHtml(resultColumnTitle()) + '</th><th>Impressões</th><th>CTR</th></tr></thead><tbody>'
       + rows.map(row => '<tr class="campaign-row" tabindex="0" role="button" aria-label="Ver detalhes: ' + escapeHtml(row.name) + '" data-action="campaign" data-id="' + escapeHtml(row.id) + '"><td><div class="campaign-name">' + escapeHtml(row.name) + '</div>' + (row.objective ? '<div class="campaign-objective">' + escapeHtml(row.objective) + '</div>' : '') + '</td>'
         + (showPlatform ? '<td><span class="platform-badge ' + (row.platform === "Google Ads" ? "google" : "") + '"><i class="mini-dot"></i>' + escapeHtml(row.platform) + '</span></td>' : '')
-        + '<td class="td-strong">' + money(row.spend) + '</td><td>' + integer(row.clicks) + '</td>' + campaignResultCell(row, showPlatform)
+        + campaignStatusCell(row) + '<td class="td-strong">' + money(row.spend) + '</td><td>' + integer(row.clicks) + '</td>' + campaignResultCell(row, showPlatform)
         + '<td>' + integer(row.impressions) + '</td><td>' + percent(row.ctr) + '</td></tr>').join("")
       + '</tbody></table></div>';
   }
@@ -374,9 +396,21 @@
   function render() {
     const content = document.getElementById("pageContent");
     if (!content) return;
-    content.innerHTML = state.view === "campaigns" ? campaignsPage() : state.view === "compare" ? comparePage() : overviewPage();
+    const customPeriodNotice = state.period === "custom" && !state.customApplied
+      ? '<div class="custom-period-notice">Selecione as datas e clique em Aplicar. Os dados exibidos ainda correspondem ao período anterior.</div>'
+      : "";
+    content.innerHTML = customPeriodNotice + (state.view === "campaigns" ? campaignsPage() : state.view === "compare" ? comparePage() : overviewPage());
     document.getElementById("breadcrumbPage").textContent = state.view === "campaigns" ? "Campanhas" : state.view === "compare" ? "Comparativo" : "Visão geral";
-    document.getElementById("periodSelect").value = state.period;
+    const periodSelect = document.getElementById("periodSelect");
+    if (periodSelect) periodSelect.value = state.period;
+    const customControls = document.getElementById("customPeriodControls");
+    const periodSince = document.getElementById("periodSince");
+    const periodUntil = document.getElementById("periodUntil");
+    const applyCustomPeriod = document.getElementById("applyCustomPeriod");
+    if (customControls) customControls.hidden = state.period !== "custom";
+    if (periodSince) periodSince.value = state.customSince;
+    if (periodUntil) periodUntil.value = state.customUntil;
+    if (applyCustomPeriod) applyCustomPeriod.disabled = !hasValidCustomRange() || state.loading;
     const sidebar = document.getElementById("sidebar");
     sidebar.classList.toggle("collapsed", state.collapsed);
     sidebar.classList.toggle("mobile-open", state.mobileOpen);
@@ -433,6 +467,10 @@
     try {
       const endpoint = new URL("api/v1/report.php", document.baseURI);
       endpoint.searchParams.set("period", state.period);
+      if (state.period === "custom") {
+        endpoint.searchParams.set("since", state.customSince);
+        endpoint.searchParams.set("until", state.customUntil);
+      }
       const response = await fetch(endpoint.toString(), {
         method: "GET",
         headers: { "Accept": "application/json" },
@@ -480,8 +518,17 @@
     if (action === "toggle-mobile") { state.mobileOpen = !state.mobileOpen; render(); }
     if (action === "close-mobile") { state.mobileOpen = false; render(); }
     if (action === "refresh") {
+      if (state.period === "custom" && (!state.customApplied || !hasValidCustomRange())) {
+        showToast("Selecione as datas e clique em Aplicar.");
+        return;
+      }
       actionEl.classList.add("is-refreshing");
       loadReport().finally(() => actionEl.classList.remove("is-refreshing"));
+    }
+    if (action === "apply-custom-period") {
+      if (!hasValidCustomRange()) return;
+      state.customApplied = true;
+      loadReport();
     }
   });
 
@@ -497,7 +544,18 @@
   document.addEventListener("change", event => {
     if (event.target.id === "periodSelect") {
       state.period = event.target.value;
+      if (state.period === "custom") {
+        state.customApplied = false;
+        render();
+        return;
+      }
       loadReport();
+    }
+    if (event.target.id === "periodSince" || event.target.id === "periodUntil") {
+      state.customSince = document.getElementById("periodSince").value;
+      state.customUntil = document.getElementById("periodUntil").value;
+      state.customApplied = false;
+      render();
     }
   });
 

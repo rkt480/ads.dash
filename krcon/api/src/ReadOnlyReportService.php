@@ -7,12 +7,12 @@ require_once __DIR__ . '/ReportPeriod.php';
 
 final class ReadOnlyReportService
 {
-    public function getReport(string $period, ?array $customRange = null): array
+    public function getReport(string $period, ?array $customRange = null, bool $includeMetaAds = false): array
     {
         $range = ReportPeriod::range($period, $customRange);
         $metaResult = $this->readPlatform(
-            static function () use ($range): array {
-                return (new MetaAdsProvider())->readInsights($range);
+            static function () use ($range, $includeMetaAds): array {
+                return (new MetaAdsProvider())->readInsights($range, $includeMetaAds);
             }
         );
         $googleResult = $this->readPlatform(

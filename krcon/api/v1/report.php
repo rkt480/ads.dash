@@ -19,6 +19,7 @@ if (!in_array($period, $allowedPeriods, true)) {
 
 $customRange = null;
 $cachePeriod = $period;
+$includeMetaAds = isset($_GET['include_meta_ads']) && $_GET['include_meta_ads'] === '1';
 if ($period === 'custom') {
     $since = isset($_GET['since']) && is_string($_GET['since']) ? $_GET['since'] : '';
     $until = isset($_GET['until']) && is_string($_GET['until']) ? $_GET['until'] : '';
@@ -27,6 +28,9 @@ if ($period === 'custom') {
     }
     $customRange = ['since' => $since, 'until' => $until];
     $cachePeriod = 'custom-' . substr(hash('sha256', $since . "\0" . $until), 0, 20);
+}
+if ($includeMetaAds) {
+    $cachePeriod .= '-meta-ads';
 }
 
 $cacheDirectory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'krcon-report-cache';
@@ -38,7 +42,7 @@ $cacheAccountScope = implode("\0", [
 ]);
 $cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
 $cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
-    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v3-' . $cachePeriod . '.json';
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v4-' . $cachePeriod . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
@@ -49,7 +53,7 @@ if (is_file($cacheFile) && is_readable($cacheFile)
 }
 
 try {
-    $report = (new ReadOnlyReportService())->getReport($period, $customRange);
+    $report = (new ReadOnlyReportService())->getReport($period, $customRange, $includeMetaAds);
     $payload = ['data' => $report];
     $hasConnectedPlatform = in_array('connected', $report['integrations'] ?? [], true);
     if ($hasConnectedPlatform) {

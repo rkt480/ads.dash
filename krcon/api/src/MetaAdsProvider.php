@@ -7,7 +7,7 @@ require_once __DIR__ . '/ServerHttpClient.php';
 /** Read-only adapter boundary for Meta Ads. Credentials are read only on the server. */
 final class MetaAdsProvider
 {
-    public function readInsights(array $range): array
+    public function readInsights(array $range, bool $includeAds = false): array
     {
         $token = api_env('META_ACCESS_TOKEN');
         $accountId = api_env('META_AD_ACCOUNT_ID');
@@ -67,10 +67,208 @@ final class MetaAdsProvider
         }
         unset($campaign);
 
+        $ads = [];
+        $adsStatus = 'not_requested';
+        if ($includeAds) {
+            try {
+                $ads = $this->readAdInsights($client, $accountId, $apiVersion, $range, $token, $campaigns);
+                $creativePreviews = $ads === []
+                    ? []
+                    : $this->adCreativePreviews($client, $accountId, $apiVersion, $token);
+                foreach ($ads as &$ad) {
+                    $preview = $creativePreviews[$ad['id']] ?? [];
+                    $ad['preview_url'] = $preview['url'] ?? '';
+                    $ad['media_type'] = $preview['type'] ?? '';
+                }
+                unset($ad);
+                $adsStatus = 'connected';
+            } catch (UpstreamApiFailure $error) {
+                $ads = [];
+                $adsStatus = 'unavailable';
+            }
+        }
+
         return [
             'totals' => $this->totals($campaigns),
             'campaigns' => $campaigns,
+            'ads' => $ads,
+            'ads_status' => $adsStatus,
         ];
+    }
+
+    private function readAdInsights(
+        ServerHttpClient $client,
+        string $accountId,
+        string $apiVersion,
+        array $range,
+        string $token,
+        array $campaigns
+    ): array {
+        $campaignsById = [];
+        foreach ($campaigns as $campaign) {
+            $campaignsById[$campaign['id']] = $campaign;
+        }
+
+        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/insights';
+        $params = [
+            'level' => 'ad',
+            'time_range' => json_encode($range, JSON_UNESCAPED_SLASHES),
+            'fields' => 'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,clicks,actions,results,cost_per_action_type,ctr,date_start,date_stop',
+            'limit' => '500',
+        ];
+        $ads = [];
+        $after = null;
+
+        for ($page = 0; $page < 20; $page++) {
+            if ($after !== null) {
+                $params['after'] = $after;
+            }
+            $url = $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+            $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
+            $rows = $response['data'] ?? [];
+            if (!is_array($rows)) {
+                throw new UpstreamApiFailure('meta_ad_insights_invalid');
+            }
+            foreach ($rows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $campaign = $campaignsById[(string) ($row['campaign_id'] ?? '')] ?? [];
+                $ad = $this->normalizeAd($row, $campaign);
+                if ($this->hasReportData($ad)) {
+                    unset($ad['actions']);
+                    $ads[] = $ad;
+                }
+            }
+
+            $nextAfter = $response['paging']['cursors']['after'] ?? null;
+            if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
+                break;
+            }
+            $after = $nextAfter;
+        }
+
+        usort($ads, static fn (array $left, array $right): int => $right['spend'] <=> $left['spend']);
+        return $ads;
+    }
+
+    private function normalizeAd(array $row, array $campaign): array
+    {
+        $actions = is_array($row['actions'] ?? null) ? $row['actions'] : [];
+        $objective = (string) ($campaign['objective'] ?? '');
+        $results = $this->normalizeResults($row['results'] ?? $row['objective_results'] ?? []);
+        $resultType = (string) ($results[0]['type'] ?? '');
+        if ($this->isLeadObjective($objective) || $this->isLeadResultType($resultType)) {
+            $leadResult = $this->leadResultFromActions($actions);
+            if ($leadResult !== null && ($results === [] || ($results[0]['value'] ?? 0) <= 0)) {
+                $results = [$leadResult];
+            }
+        }
+
+        return [
+            'id' => (string) ($row['ad_id'] ?? ''),
+            'name' => (string) ($row['ad_name'] ?? 'Anúncio sem nome'),
+            'campaign_id' => (string) ($row['campaign_id'] ?? ''),
+            'campaign_name' => (string) ($row['campaign_name'] ?? $campaign['name'] ?? 'Campanha sem nome'),
+            'spend' => $this->number($row['spend'] ?? 0),
+            'reach' => (int) $this->number($row['reach'] ?? 0),
+            'impressions' => (int) $this->number($row['impressions'] ?? 0),
+            'clicks' => (int) $this->number($row['clicks'] ?? 0),
+            'ctr' => $this->number($row['ctr'] ?? 0),
+            'actions' => $actions,
+            'results' => $results,
+            'result' => $results[0] ?? ['type' => '', 'value' => 0.0],
+            'preview_url' => '',
+            'media_type' => '',
+        ];
+    }
+
+    private function adCreativePreviews(
+        ServerHttpClient $client,
+        string $accountId,
+        string $apiVersion,
+        string $token
+    ): array {
+        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
+        $fieldsOptions = [
+            'id,creative{thumbnail_url,image_url,object_type,video_id,object_story_spec}',
+            'id,creative{thumbnail_url,image_url,video_id}',
+            'id,creative{thumbnail_url}',
+        ];
+
+        foreach ($fieldsOptions as $fields) {
+            $params = ['fields' => $fields, 'limit' => '500'];
+            $previews = [];
+            $after = null;
+            try {
+                for ($page = 0; $page < 20; $page++) {
+                    if ($after !== null) {
+                        $params['after'] = $after;
+                    }
+                    $url = $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
+                    $rows = $response['data'] ?? [];
+                    if (!is_array($rows)) {
+                        break;
+                    }
+                    foreach ($rows as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+                        $id = (string) ($row['id'] ?? '');
+                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
+                        if ($id === '' || $creative === []) {
+                            continue;
+                        }
+                        $story = is_array($creative['object_story_spec'] ?? null)
+                            ? $creative['object_story_spec'] : [];
+                        $videoData = is_array($story['video_data'] ?? null) ? $story['video_data'] : [];
+                        $linkData = is_array($story['link_data'] ?? null) ? $story['link_data'] : [];
+                        $photoData = is_array($story['photo_data'] ?? null) ? $story['photo_data'] : [];
+                        $url = $this->safeMediaUrl($creative['thumbnail_url'] ?? '')
+                            ?: $this->safeMediaUrl($creative['image_url'] ?? '')
+                            ?: $this->safeMediaUrl($videoData['image_url'] ?? '')
+                            ?: $this->safeMediaUrl($linkData['picture'] ?? '')
+                            ?: $this->safeMediaUrl($photoData['url'] ?? '');
+                        $isVideo = !empty($creative['video_id'])
+                            || strtoupper((string) ($creative['object_type'] ?? '')) === 'VIDEO'
+                            || $videoData !== [];
+                        $previews[$id] = [
+                            'url' => $url,
+                            'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
+                        ];
+                    }
+
+                    $nextAfter = $response['paging']['cursors']['after'] ?? null;
+                    if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
+                        break;
+                    }
+                    $after = $nextAfter;
+                }
+                return $previews;
+            } catch (UpstreamApiFailure $error) {
+                // Retry with fewer creative fields for API versions with narrower field support.
+            }
+        }
+
+        return [];
+    }
+
+    private function safeMediaUrl($value): string
+    {
+        if (!is_string($value) || $value === '') {
+            return '';
+        }
+        $parts = parse_url($value);
+        if (!is_array($parts) || strtolower((string) ($parts['scheme'] ?? '')) !== 'https') {
+            return '';
+        }
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $isMetaHost = $host === 'facebook.com'
+            || substr($host, -strlen('.facebook.com')) === '.facebook.com'
+            || substr($host, -strlen('.fbcdn.net')) === '.fbcdn.net'
+            || substr($host, -strlen('.fbsbx.com')) === '.fbsbx.com';
+        return $isMetaHost ? $value : '';
     }
 
     private function campaignStatuses(
@@ -257,7 +455,7 @@ final class MetaAdsProvider
 
     private function hasReportData(array $campaign): bool
     {
-        foreach (['spend', 'impressions', 'clicks', 'ctr'] as $metric) {
+        foreach (['spend', 'reach', 'impressions', 'clicks', 'ctr'] as $metric) {
             if (($campaign[$metric] ?? 0) != 0) {
                 return true;
             }

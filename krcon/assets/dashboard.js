@@ -25,6 +25,8 @@
     requestId: 0
   };
   let campaigns = [];
+  let metaAds = [];
+  let metaAdsStatus = "unknown";
 
   const money = value => new Intl.NumberFormat("pt-BR", {
     style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2
@@ -77,6 +79,28 @@
       });
     });
     return result;
+  }
+
+  function adaptMetaAds(metaReport) {
+    const rows = metaReport?.ads;
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => ({
+      id: String(row.id || ""),
+      name: String(row.name || "Anúncio sem nome"),
+      campaignName: String(row.campaign_name || "Campanha sem nome"),
+      platform: "Meta Ads",
+      previewUrl: String(row.preview_url || ""),
+      mediaType: String(row.media_type || ""),
+      result: row.result && typeof row.result === "object" ? {
+        type: String(row.result.type || ""),
+        value: Number(row.result.value) || 0
+      } : { type: "", value: 0 },
+      reach: Number(row.reach) || 0,
+      impressions: Number(row.impressions) || 0,
+      ctr: Number(row.ctr) || 0,
+      clicks: Number(row.clicks) || 0,
+      spend: Number(row.spend) || 0
+    }));
   }
 
   function platformCampaigns(platform = state.platform) {
@@ -355,6 +379,35 @@
       + '</tbody></table></div>';
   }
 
+  function metaAdPreviewCell(ad) {
+    const alt = "Prévia do anúncio: " + ad.name;
+    const fallback = '<span class="ad-preview-fallback">Prévia indisponível</span>';
+    const media = ad.previewUrl
+      ? '<img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span>'
+      : fallback;
+    const videoBadge = ad.mediaType === "video" ? '<span class="ad-video-badge">Vídeo</span>' : '';
+    return '<td class="ad-preview-cell"><div class="ad-preview-details"><div class="ad-preview-frame">' + media + videoBadge + '</div>'
+      + '<div class="ad-preview-name" title="' + escapeHtml(ad.name) + '">' + escapeHtml(ad.name) + '</div></div></td>';
+  }
+
+  function metaAdsTable() {
+    let emptyMessage = "Nenhum anúncio retornou dados para o período selecionado.";
+    if (state.loading) emptyMessage = "Consultando anúncios da Meta...";
+    else if (integrationStatus("Meta Ads") === "not_configured") emptyMessage = "Conecte o Meta Ads para consultar os anúncios.";
+    else if (integrationStatus("Meta Ads") === "unavailable") emptyMessage = "Não foi possível consultar a conta do Meta Ads neste momento.";
+    else if (metaAdsStatus === "unavailable") emptyMessage = "Não foi possível consultar as métricas dos anúncios neste momento.";
+
+    const table = metaAds.length
+      ? '<div class="table-scroll"><table class="meta-ads-table"><thead><tr><th>Campanha</th><th>Anúncio</th><th>Resultados</th><th>Alcance</th><th>Impressões</th><th>CTR</th><th>Cliques</th></tr></thead><tbody>'
+        + metaAds.map(ad => '<tr><td><div class="campaign-name" title="' + escapeHtml(ad.campaignName) + '">' + escapeHtml(ad.campaignName) + '</div></td>'
+          + metaAdPreviewCell(ad) + campaignResultCell(ad, false)
+          + '<td>' + integer(ad.reach) + '</td><td>' + integer(ad.impressions) + '</td><td>' + percent(ad.ctr) + '</td><td>' + integer(ad.clicks) + '</td></tr>').join("")
+        + '</tbody></table></div>'
+      : '<div class="table-empty">' + escapeHtml(emptyMessage) + '</div>';
+
+    return '<section class="card table-card meta-ads-card"><div class="card-heading"><div><h2 class="card-title">Anúncios</h2><p class="card-subtitle">Prévia e métricas por anúncio no período selecionado</p></div></div>' + table + '</section>';
+  }
+
   function filteredCampaigns() {
     const query = state.query.trim().toLocaleLowerCase("pt-BR");
     return platformCampaigns().filter(row => !query || (row.name + " " + row.objective + " " + row.platform).toLocaleLowerCase("pt-BR").includes(query));
@@ -364,7 +417,7 @@
     const rows = platformCampaigns();
     const top = rows.slice().sort((a, b) => b.spend - a.spend).slice(0, 5);
     const summary = totals();
-    return pageHeading("Visão geral", "Indicadores e campanhas da conta de anúncios " + dashboardConfig.accountName + ".") + connectionAlert() + platformFilters() + '<section class="metric-grid" aria-label="Indicadores do período">' + metricCards() + '</section><section class="insight-banner"><div class="insight-copy"><strong>Resumo do período</strong><p>' + escapeHtml(insightText()) + '</p></div></section><section class="overview-grid"><article class="card chart-card"><div class="card-heading"><div><h2 class="card-title">Investimento por campanha</h2><p class="card-subtitle">Maiores investimentos no período · dados da API</p></div></div>' + campaignSpendChart(rows) + '</article><article class="card spend-card"><div class="card-heading"><div><h2 class="card-title">Investimento por plataforma</h2><p class="card-subtitle">Distribuição entre contas conectadas</p></div></div>' + spendDistribution() + '</article></section><section class="card table-card"><div class="card-heading"><div><h2 class="card-title">Campanhas em destaque</h2><p class="card-subtitle">Ordenadas pelo investimento no período</p></div><button class="text-button" type="button" data-action="navigate" data-view="campaigns">Ver todas ' + icon("chevron") + '</button></div>' + campaignTable(top, false) + '</section><div class="footer-note">' + icon("info") + ' Dados consultados no servidor. Atualizado em ' + escapeHtml(formatGeneratedAt()) + '.</div>';
+    return pageHeading("Visão geral", "Indicadores e campanhas da conta de anúncios " + dashboardConfig.accountName + ".") + connectionAlert() + platformFilters() + '<section class="metric-grid" aria-label="Indicadores do período">' + metricCards() + '</section><section class="insight-banner"><div class="insight-copy"><strong>Resumo do período</strong><p>' + escapeHtml(insightText()) + '</p></div></section><section class="overview-grid"><article class="card chart-card"><div class="card-heading"><div><h2 class="card-title">Investimento por campanha</h2><p class="card-subtitle">Maiores investimentos no período · dados da API</p></div></div>' + campaignSpendChart(rows) + '</article><article class="card spend-card"><div class="card-heading"><div><h2 class="card-title">Investimento por plataforma</h2><p class="card-subtitle">Distribuição entre contas conectadas</p></div></div>' + spendDistribution() + '</article></section><section class="card table-card"><div class="card-heading"><div><h2 class="card-title">Campanhas em destaque</h2><p class="card-subtitle">Ordenadas pelo investimento no período</p></div><button class="text-button" type="button" data-action="navigate" data-view="campaigns">Ver todas ' + icon("chevron") + '</button></div>' + campaignTable(top, false) + '</section>' + (state.platform === "Meta Ads" ? metaAdsTable() : '') + '<div class="footer-note">' + icon("info") + ' Dados consultados no servidor. Atualizado em ' + escapeHtml(formatGeneratedAt()) + '.</div>';
   }
 
   function campaignsPage() {
@@ -463,6 +516,8 @@
     state.loading = true;
     state.error = null;
     campaigns = [];
+    metaAds = [];
+    metaAdsStatus = "unknown";
     render();
     try {
       const endpoint = new URL("api/v1/report.php", document.baseURI);
@@ -471,6 +526,7 @@
         endpoint.searchParams.set("since", state.customSince);
         endpoint.searchParams.set("until", state.customUntil);
       }
+      if (state.platform === "Meta Ads") endpoint.searchParams.set("include_meta_ads", "1");
       const response = await fetch(endpoint.toString(), {
         method: "GET",
         headers: { "Accept": "application/json" },
@@ -484,10 +540,14 @@
       state.integrations = body.data.integrations || { meta: "unknown", google: "unknown" };
       state.generatedAt = body.data.generated_at || null;
       campaigns = adaptCampaigns(body.data);
+      metaAds = adaptMetaAds(body.data.meta || {});
+      metaAdsStatus = String(body.data.meta?.ads_status || "unknown");
     } catch (error) {
       if (requestId !== state.requestId) return;
       state.error = error instanceof Error && error.message === "auth" ? "auth" : "service";
       campaigns = [];
+      metaAds = [];
+      metaAdsStatus = "unavailable";
     } finally {
       if (requestId === state.requestId) {
         state.loading = false;
@@ -495,6 +555,14 @@
       }
     }
   }
+
+  document.addEventListener("error", event => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.classList.contains("ad-preview-image")) return;
+    image.hidden = true;
+    const fallback = image.parentElement?.querySelector(".ad-preview-fallback");
+    if (fallback) fallback.hidden = false;
+  }, true);
 
   document.addEventListener("click", event => {
     const actionEl = event.target.closest("[data-action]");
@@ -510,6 +578,7 @@
       state.view = "overview";
       state.mobileOpen = false;
       render();
+      if (state.platform === "Meta Ads") loadReport();
     }
     if (action === "campaign") showCampaign(actionEl.dataset.id);
     if (action === "close-modal" && !event.target.closest("[data-modal-content]")) closeModal();

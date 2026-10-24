@@ -5,9 +5,9 @@ require_once __DIR__ . '/IntegrationNotConfigured.php';
 
 final class ServerHttpClient
 {
-    public function getJson(string $url, array $headers): array
+    public function getJson(string $url, array $headers, int $timeoutSeconds = 25): array
     {
-        return $this->send($url, 'GET', $headers, null);
+        return $this->send($url, 'GET', $headers, null, $timeoutSeconds);
     }
 
     public function postJson(string $url, array $headers, array $body): array
@@ -31,7 +31,7 @@ final class ServerHttpClient
         );
     }
 
-    private function send(string $url, string $method, array $headers, ?string $body): array
+    private function send(string $url, string $method, array $headers, ?string $body, int $timeoutSeconds = 25): array
     {
         if (!function_exists('curl_init')) {
             throw new UpstreamApiFailure('curl_extension_missing');
@@ -47,12 +47,14 @@ final class ServerHttpClient
             throw new UpstreamApiFailure('http_client_unavailable');
         }
 
+        $timeoutSeconds = max(1, min(25, $timeoutSeconds));
+        $connectTimeoutSeconds = $timeoutSeconds < 25 ? min(4, $timeoutSeconds) : 8;
         $options = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_TIMEOUT => 25,
+            CURLOPT_CONNECTTIMEOUT => $connectTimeoutSeconds,
+            CURLOPT_TIMEOUT => $timeoutSeconds,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,

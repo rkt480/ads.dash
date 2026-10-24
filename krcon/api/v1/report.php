@@ -42,7 +42,7 @@ $cacheAccountScope = implode("\0", [
 ]);
 $cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
 $cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
-    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v5-' . $cachePeriod . '.json';
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v6-' . $cachePeriod . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
@@ -56,7 +56,9 @@ try {
     $report = (new ReadOnlyReportService())->getReport($period, $customRange, $includeMetaAds);
     $payload = ['data' => $report];
     $hasConnectedPlatform = in_array('connected', $report['integrations'] ?? [], true);
-    if ($hasConnectedPlatform) {
+    $hasUnavailablePlatform = in_array('unavailable', $report['integrations'] ?? [], true);
+    $metaAdsUnavailable = $includeMetaAds && ($report['meta']['ads_status'] ?? '') === 'unavailable';
+    if ($hasConnectedPlatform && !$hasUnavailablePlatform && !$metaAdsUnavailable) {
         if (!is_dir($cacheDirectory)) {
             @mkdir($cacheDirectory, 0700, true);
         }

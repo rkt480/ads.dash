@@ -72,9 +72,14 @@ final class MetaAdsProvider
         if ($includeAds) {
             try {
                 $ads = $this->readAdInsights($client, $accountId, $apiVersion, $range, $token, $campaigns);
-                $creativePreviews = $ads === []
-                    ? []
-                    : $this->adCreativePreviews($client, $accountId, $apiVersion, $token, $ads);
+                $creativePreviews = [];
+                if ($ads !== []) {
+                    try {
+                        $creativePreviews = $this->adCreativePreviews($client, $apiVersion, $token, $ads);
+                    } catch (Throwable $error) {
+                        // Preview failures must not block the campaign and ad metrics.
+                    }
+                }
                 foreach ($ads as &$ad) {
                     $preview = $creativePreviews[$ad['id']] ?? [];
                     $ad['preview_url'] = $preview['url'] ?? '';
@@ -185,7 +190,6 @@ final class MetaAdsProvider
 
     private function adCreativePreviews(
         ServerHttpClient $client,
-        string $accountId,
         string $apiVersion,
         string $token,
         array $reportAds
@@ -197,96 +201,79 @@ final class MetaAdsProvider
             }
         }
 
-        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
-        $fieldsOptions = [
-            'id,creative{id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec}',
-            'id,creative{id,thumbnail_url,image_url,video_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,video_id}',
-            'id,creative{id,thumbnail_url}',
-        ];
+        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/';
+        $adFields = 'id,creative{id,thumbnail_url,image_url,object_type,video_id,object_story_spec}';
 
         $previews = [];
-        foreach ($fieldsOptions as $fields) {
-            $params = ['fields' => $fields, 'limit' => '500'];
-            $after = null;
+        $creativeIdsByAd = [];
+        foreach (array_chunk(array_keys($wantedIds), 50) as $adIds) {
             try {
-                for ($page = 0; $page < 20; $page++) {
-                    if ($after !== null) {
-                        $params['after'] = $after;
+                $url = $baseUrl . '?' . http_build_query(
+                    ['ids' => implode(',', $adIds), 'fields' => $adFields],
+                    '',
+                    '&',
+                    PHP_QUERY_RFC3986
+                );
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 6);
+                $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
+                foreach ($rows as $key => $row) {
+                    if (!is_array($row) || isset($row['error'])) {
+                        continue;
                     }
-                    $url = $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
-                    $rows = $response['data'] ?? [];
-                    if (!is_array($rows)) {
-                        break;
+                    $id = (string) ($row['id'] ?? $key);
+                    if (!isset($wantedIds[$id])) {
+                        continue;
                     }
-                    foreach ($rows as $row) {
-                        if (!is_array($row)) {
-                            continue;
-                        }
-                        $id = (string) ($row['id'] ?? '');
-                        if ($id === '' || !isset($wantedIds[$id])) {
-                            continue;
-                        }
-                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
-                        if ($id === '' || $creative === []) {
-                            continue;
-                        }
+                    $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
+                    if ($creative !== []) {
                         $previews[$id] = $this->normalizeCreativePreview($creative);
+                        $creativeId = (string) ($creative['id'] ?? '');
+                        if ($creativeId !== '' && $previews[$id]['url'] === '') {
+                            $creativeIdsByAd[$id] = $creativeId;
+                        }
                     }
-
-                    $nextAfter = $response['paging']['cursors']['after'] ?? null;
-                    if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
-                        break;
-                    }
-                    $after = $nextAfter;
                 }
-                break;
             } catch (UpstreamApiFailure $error) {
-                // Retry with fewer creative fields for API versions with narrower field support.
+                // Keep report metrics available when the optional media lookup fails.
+                break;
             }
         }
 
-        // Some Graph API versions return only the creative ID on the account ads edge.
-        // Fetch the ad's creative edge directly for any rows whose preview was not expanded.
-        foreach (array_keys($wantedIds) as $adId) {
-            if (!empty($previews[$adId]['url'])) {
-                continue;
-            }
-            $edgeUrl = 'https://graph.facebook.com/' . $apiVersion . '/' . rawurlencode($adId) . '/adcreatives';
-            foreach ([
-                'id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec',
-                'id,thumbnail_url,image_url,video_id,object_story_spec',
-                'id,thumbnail_url,image_url,video_id',
-                'id,thumbnail_url',
-            ] as $fields) {
-                try {
-                    $url = $edgeUrl . '?' . http_build_query(
-                        ['fields' => $fields, 'limit' => '10'],
-                        '',
-                        '&',
-                        PHP_QUERY_RFC3986
-                    );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
-                    $creatives = $response['data'] ?? [];
-                    if (!is_array($creatives)) {
-                        break;
+        // Resolve missing thumbnails by creative ID in batches instead of one request per ad.
+        foreach (array_chunk(array_values(array_unique($creativeIdsByAd)), 50) as $creativeIds) {
+            try {
+                $url = $baseUrl . '?' . http_build_query(
+                    [
+                        'ids' => implode(',', $creativeIds),
+                        'fields' => 'id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec',
+                    ],
+                    '',
+                    '&',
+                    PHP_QUERY_RFC3986
+                );
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 6);
+                $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
+                $creativesById = [];
+                foreach ($rows as $key => $creative) {
+                    if (!is_array($creative) || isset($creative['error'])) {
+                        continue;
                     }
-                    foreach ($creatives as $creative) {
-                        if (!is_array($creative)) {
-                            continue;
-                        }
-                        $preview = $this->normalizeCreativePreview($creative);
-                        if ($preview['url'] !== '') {
-                            $previews[$adId] = $preview;
-                            break 2;
-                        }
-                    }
-                    // An empty successful response has no reason to retry narrower fields.
-                    break;
-                } catch (UpstreamApiFailure $error) {
-                    // Retry with fewer creative fields for API versions with narrower field support.
+                    $creativeId = (string) ($creative['id'] ?? $key);
+                    $creativesById[$creativeId] = $creative;
                 }
+                foreach ($creativeIdsByAd as $adId => $creativeId) {
+                    $creative = $creativesById[$creativeId] ?? null;
+                    if (!is_array($creative)) {
+                        continue;
+                    }
+                    $preview = $this->normalizeCreativePreview($creative);
+                    if ($preview['url'] !== '') {
+                        $previews[$adId] = $preview;
+                    }
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Keep report metrics available when the optional media lookup fails.
+                break;
             }
         }
 

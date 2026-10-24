@@ -128,6 +128,10 @@
     const google = integrationStatus("Google Ads");
     if (state.loading) return { label: "CONSULTANDO SERVIDOR", css: "partial", details: "Buscando dados de " + dashboardConfig.accountName + "." };
     if (state.error) return { label: "DADOS INDISPONÍVEIS", css: "unavailable", details: "A consulta ao servidor não foi concluída." };
+    if (meta === "unavailable" || google === "unavailable") {
+      const unavailable = meta === "unavailable" ? "Meta Ads" : "Google Ads";
+      return { label: "VERIFICAR CONEXÃO", css: "unavailable", details: unavailable + " está temporariamente indisponível." };
+    }
     if (meta === "connected" && google === "connected") {
       return { label: "DADOS ATUALIZADOS", css: "connected", details: "Meta Ads e Google Ads conectados." };
     }
@@ -135,9 +139,6 @@
       const missing = meta === "connected" ? "Google Ads" : "Meta Ads";
       const active = meta === "connected" ? "Meta Ads" : "Google Ads";
       return { label: "INTEGRAÇÃO PARCIAL", css: "partial", details: active + " conectado · " + missing + " sem configuração." };
-    }
-    if (meta === "unavailable" || google === "unavailable") {
-      return { label: "VERIFICAR CONEXÃO", css: "unavailable", details: "Uma plataforma não respondeu. Confira as credenciais no servidor." };
     }
     return { label: "SEM CONEXÃO", css: "unavailable", details: "Configure as credenciais de anúncio no servidor." };
   }

@@ -74,7 +74,7 @@ final class MetaAdsProvider
                 $ads = $this->readAdInsights($client, $accountId, $apiVersion, $range, $token, $campaigns);
                 $creativePreviews = $ads === []
                     ? []
-                    : $this->adCreativePreviews($client, $accountId, $apiVersion, $token);
+                    : $this->adCreativePreviews($client, $accountId, $apiVersion, $token, $ads);
                 foreach ($ads as &$ad) {
                     $preview = $creativePreviews[$ad['id']] ?? [];
                     $ad['preview_url'] = $preview['url'] ?? '';
@@ -187,18 +187,27 @@ final class MetaAdsProvider
         ServerHttpClient $client,
         string $accountId,
         string $apiVersion,
-        string $token
+        string $token,
+        array $reportAds
     ): array {
+        $wantedIds = [];
+        foreach ($reportAds as $ad) {
+            if (is_array($ad) && (string) ($ad['id'] ?? '') !== '') {
+                $wantedIds[(string) $ad['id']] = true;
+            }
+        }
+
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
         $fieldsOptions = [
-            'id,creative{thumbnail_url,image_url,object_type,video_id,object_story_spec}',
-            'id,creative{thumbnail_url,image_url,video_id}',
-            'id,creative{thumbnail_url}',
+            'id,creative{id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec}',
+            'id,creative{id,thumbnail_url,image_url,video_id,object_story_spec}',
+            'id,creative{id,thumbnail_url,image_url,video_id}',
+            'id,creative{id,thumbnail_url}',
         ];
 
+        $previews = [];
         foreach ($fieldsOptions as $fields) {
             $params = ['fields' => $fields, 'limit' => '500'];
-            $previews = [];
             $after = null;
             try {
                 for ($page = 0; $page < 20; $page++) {
@@ -216,27 +225,14 @@ final class MetaAdsProvider
                             continue;
                         }
                         $id = (string) ($row['id'] ?? '');
+                        if ($id === '' || !isset($wantedIds[$id])) {
+                            continue;
+                        }
                         $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
                         if ($id === '' || $creative === []) {
                             continue;
                         }
-                        $story = is_array($creative['object_story_spec'] ?? null)
-                            ? $creative['object_story_spec'] : [];
-                        $videoData = is_array($story['video_data'] ?? null) ? $story['video_data'] : [];
-                        $linkData = is_array($story['link_data'] ?? null) ? $story['link_data'] : [];
-                        $photoData = is_array($story['photo_data'] ?? null) ? $story['photo_data'] : [];
-                        $url = $this->safeMediaUrl($creative['thumbnail_url'] ?? '')
-                            ?: $this->safeMediaUrl($creative['image_url'] ?? '')
-                            ?: $this->safeMediaUrl($videoData['image_url'] ?? '')
-                            ?: $this->safeMediaUrl($linkData['picture'] ?? '')
-                            ?: $this->safeMediaUrl($photoData['url'] ?? '');
-                        $isVideo = !empty($creative['video_id'])
-                            || strtoupper((string) ($creative['object_type'] ?? '')) === 'VIDEO'
-                            || $videoData !== [];
-                        $previews[$id] = [
-                            'url' => $url,
-                            'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
-                        ];
+                        $previews[$id] = $this->normalizeCreativePreview($creative);
                     }
 
                     $nextAfter = $response['paging']['cursors']['after'] ?? null;
@@ -245,13 +241,111 @@ final class MetaAdsProvider
                     }
                     $after = $nextAfter;
                 }
-                return $previews;
+                break;
             } catch (UpstreamApiFailure $error) {
                 // Retry with fewer creative fields for API versions with narrower field support.
             }
         }
 
-        return [];
+        // Some Graph API versions return only the creative ID on the account ads edge.
+        // Fetch the ad's creative edge directly for any rows whose preview was not expanded.
+        foreach (array_keys($wantedIds) as $adId) {
+            if (!empty($previews[$adId]['url'])) {
+                continue;
+            }
+            $edgeUrl = 'https://graph.facebook.com/' . $apiVersion . '/' . rawurlencode($adId) . '/adcreatives';
+            foreach ([
+                'id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec',
+                'id,thumbnail_url,image_url,video_id,object_story_spec',
+                'id,thumbnail_url,image_url,video_id',
+                'id,thumbnail_url',
+            ] as $fields) {
+                try {
+                    $url = $edgeUrl . '?' . http_build_query(
+                        ['fields' => $fields, 'limit' => '10'],
+                        '',
+                        '&',
+                        PHP_QUERY_RFC3986
+                    );
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token]);
+                    $creatives = $response['data'] ?? [];
+                    if (!is_array($creatives)) {
+                        break;
+                    }
+                    foreach ($creatives as $creative) {
+                        if (!is_array($creative)) {
+                            continue;
+                        }
+                        $preview = $this->normalizeCreativePreview($creative);
+                        if ($preview['url'] !== '') {
+                            $previews[$adId] = $preview;
+                            break 2;
+                        }
+                    }
+                    // An empty successful response has no reason to retry narrower fields.
+                    break;
+                } catch (UpstreamApiFailure $error) {
+                    // Retry with fewer creative fields for API versions with narrower field support.
+                }
+            }
+        }
+
+        return $previews;
+    }
+
+    private function normalizeCreativePreview(array $creative): array
+    {
+        $story = is_array($creative['object_story_spec'] ?? null) ? $creative['object_story_spec'] : [];
+        $videoData = is_array($story['video_data'] ?? null) ? $story['video_data'] : [];
+        $linkData = is_array($story['link_data'] ?? null) ? $story['link_data'] : [];
+        $photoData = is_array($story['photo_data'] ?? null) ? $story['photo_data'] : [];
+        $assetFeed = is_array($creative['asset_feed_spec'] ?? null) ? $creative['asset_feed_spec'] : [];
+
+        $url = $this->safeMediaUrl($creative['thumbnail_url'] ?? '')
+            ?: $this->safeMediaUrl($creative['image_url'] ?? '')
+            ?: $this->safeMediaUrl($videoData['image_url'] ?? '')
+            ?: $this->safeMediaUrl($linkData['picture'] ?? '')
+            ?: $this->safeMediaUrl($photoData['url'] ?? '');
+
+        if ($url === '' && is_array($linkData['child_attachments'] ?? null)) {
+            foreach ($linkData['child_attachments'] as $attachment) {
+                if (!is_array($attachment)) {
+                    continue;
+                }
+                $url = $this->safeMediaUrl($attachment['picture'] ?? '')
+                    ?: $this->safeMediaUrl($attachment['image_url'] ?? '');
+                if ($url !== '') {
+                    break;
+                }
+            }
+        }
+
+        if ($url === '') {
+            foreach (['images', 'videos'] as $assetType) {
+                $assets = is_array($assetFeed[$assetType] ?? null) ? $assetFeed[$assetType] : [];
+                foreach ($assets as $asset) {
+                    if (!is_array($asset)) {
+                        continue;
+                    }
+                    $url = $this->safeMediaUrl($asset['thumbnail_url'] ?? '')
+                        ?: $this->safeMediaUrl($asset['image_url'] ?? '')
+                        ?: $this->safeMediaUrl($asset['url'] ?? '');
+                    if ($url !== '') {
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        $isVideo = !empty($creative['video_id'])
+            || strtoupper((string) ($creative['object_type'] ?? '')) === 'VIDEO'
+            || $videoData !== []
+            || !empty($assetFeed['videos']);
+
+        return [
+            'url' => $url,
+            'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
+        ];
     }
 
     private function safeMediaUrl($value): string

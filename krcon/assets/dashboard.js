@@ -18,6 +18,7 @@
     collapsed: false,
     mobileOpen: false,
     selectedCampaign: null,
+    selectedAdPreview: false,
     loading: false,
     error: null,
     integrations: { meta: "unknown", google: "unknown" },
@@ -384,7 +385,7 @@
     const alt = "Prévia do anúncio: " + ad.name;
     const fallback = '<span class="ad-preview-fallback">Prévia indisponível</span>';
     const media = ad.previewUrl
-      ? '<img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span>'
+      ? '<button class="ad-preview-trigger" type="button" data-action="preview-ad" data-preview-url="' + escapeHtml(ad.previewUrl) + '" data-preview-type="' + escapeHtml(ad.mediaType) + '" data-preview-name="' + escapeHtml(ad.name) + '" aria-label="Ampliar prévia do anúncio: ' + escapeHtml(ad.name) + '" title="Clique para ampliar"><img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span></button>'
       : fallback;
     const videoBadge = ad.mediaType === "video" ? '<span class="ad-video-badge">Vídeo</span>' : '';
     return '<td class="ad-preview-cell"><div class="ad-preview-details"><div class="ad-preview-frame">' + media + videoBadge + '</div>'
@@ -495,9 +496,19 @@
     if (closeButton) closeButton.focus();
   }
 
+  function showAdPreview(name, url, mediaType) {
+    if (!url) return;
+    const isVideo = mediaType === "video";
+    document.getElementById("modalRoot").innerHTML = '<div class="modal-backdrop" data-action="close-modal"><section class="campaign-modal ad-preview-modal" role="dialog" aria-modal="true" aria-labelledby="adPreviewTitle" data-modal-content><div class="modal-header"><div><h2 class="modal-title" id="adPreviewTitle">' + escapeHtml(name) + '</h2><p class="modal-subtitle">' + (isVideo ? 'Miniatura do vídeo' : 'Imagem do anúncio') + '</p></div><button class="icon-button modal-close" type="button" aria-label="Fechar prévia" data-action="close-modal-button">✕</button></div><div class="ad-preview-modal-body"><img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<span class="ad-preview-expanded-badge">Vídeo</span>' : '') + '</div></section></div>';
+    state.selectedAdPreview = true;
+    const closeButton = document.querySelector(".modal-close");
+    if (closeButton) closeButton.focus();
+  }
+
   function closeModal() {
     document.getElementById("modalRoot").innerHTML = "";
     state.selectedCampaign = null;
+    state.selectedAdPreview = false;
   }
 
   function showToast(message) {
@@ -561,7 +572,9 @@
     const image = event.target;
     if (!(image instanceof HTMLImageElement) || !image.classList.contains("ad-preview-image")) return;
     image.hidden = true;
-    const fallback = image.parentElement?.querySelector(".ad-preview-fallback");
+    const trigger = image.closest(".ad-preview-trigger");
+    if (trigger) trigger.disabled = true;
+    const fallback = image.closest(".ad-preview-frame")?.querySelector(".ad-preview-fallback");
     if (fallback) fallback.hidden = false;
   }, true);
 
@@ -582,6 +595,7 @@
       if (state.platform === "Meta Ads") loadReport();
     }
     if (action === "campaign") showCampaign(actionEl.dataset.id);
+    if (action === "preview-ad") showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType);
     if (action === "close-modal" && !event.target.closest("[data-modal-content]")) closeModal();
     if (action === "close-modal-button") closeModal();
     if (action === "collapse-sidebar") { state.collapsed = !state.collapsed; render(); }
@@ -631,7 +645,7 @@
 
   document.addEventListener("keydown", event => {
     if (event.key === "Escape") {
-      if (state.selectedCampaign) closeModal();
+      if (state.selectedCampaign || state.selectedAdPreview) closeModal();
       if (state.mobileOpen) { state.mobileOpen = false; render(); }
     }
     if ((event.key === "Enter" || event.key === " ") && event.target.matches("tr.campaign-row")) {

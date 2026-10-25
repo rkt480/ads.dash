@@ -197,6 +197,9 @@
     .ad-preview-cell { min-width: 225px; white-space: normal; }
     .ad-preview-details { display: flex; max-width: 280px; align-items: center; gap: 9px; }
     .ad-preview-frame { position: relative; display: grid; width: 96px; height: 56px; flex: 0 0 96px; overflow: hidden; place-items: center; border: 1px solid #e7ebf1; border-radius: 6px; background: #f4f6f8; }
+    .ad-preview-trigger { position: absolute; inset: 0; display: grid; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+    .ad-preview-trigger:focus-visible { z-index: 1; outline: 2px solid #5274d1; outline-offset: -2px; }
+    .ad-preview-trigger:disabled { cursor: default; }
     .ad-preview-image { display: block; width: 100%; height: 100%; object-fit: cover; }
     .ad-preview-fallback { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; padding: 5px; color: #8995a7; font-size: 8px; text-align: center; }
     .ad-preview-fallback[hidden] { display: none; }
@@ -262,6 +265,10 @@
     .modal-kpi span { display: block; color: #8793a5; font-size: 9px; }
     .modal-kpi strong { display: block; margin-top: 6px; color: #27364d; font-size: 18px; font-weight: 710; letter-spacing: -.035em; }
     .modal-explainer { margin: 14px 0 0; padding: 12px; border-radius: 9px; color: #6c7990; background: #f4f7fc; font-size: 10px; line-height: 1.55; }
+    .ad-preview-modal { display: flex; width: min(960px, 100%); max-height: calc(100vh - 40px); flex-direction: column; }
+    .ad-preview-modal-body { position: relative; display: grid; min-height: 150px; max-height: calc(100vh - 140px); padding: 16px; place-items: center; overflow: auto; background: #141b26; }
+    .ad-preview-expanded { display: block; max-width: 100%; max-height: calc(100vh - 180px); object-fit: contain; }
+    .ad-preview-expanded-badge { position: absolute; right: 24px; bottom: 24px; padding: 6px 9px; border-radius: 4px; color: #fff; background: rgba(25, 34, 47, .82); font-size: 10px; font-weight: 700; }
     .toast { position: fixed; right: 24px; bottom: 23px; z-index: 80; display: flex; align-items: center; gap: 8px; padding: 11px 14px; border: 1px solid #dce8e2; border-radius: 10px; color: #39785f; background: #fff; box-shadow: 0 8px 24px rgba(20,34,56,.1); font-size: 11px; animation: modal-in .15s ease-out; }
     .toast svg { width: 15px; height: 15px; }
     .sidebar-overlay { display: none; }
@@ -344,6 +351,13 @@
       .overview-grid { grid-template-columns: minmax(0,1.4fr) minmax(250px,.85fr); }
       .topbar { padding-right: 23px; padding-left: 23px; }
       .page-content { padding-right: 23px; padding-left: 23px; }
+    }
+    @media (max-width: 640px) {
+      .modal-backdrop { padding: 12px; }
+      .ad-preview-modal { max-height: calc(100vh - 24px); }
+      .ad-preview-modal-body { max-height: calc(100vh - 112px); padding: 10px; }
+      .ad-preview-expanded { max-height: calc(100vh - 140px); }
+      .ad-preview-expanded-badge { right: 17px; bottom: 17px; }
     }
     @media (max-width: 900px) {
       .sidebar { width: 252px; transform: translateX(-102%); box-shadow: 18px 0 40px rgba(12,22,39,.16); }
@@ -476,6 +490,6 @@
   </div>
   <div id="modalRoot"></div>
 
-  <script src="assets/dashboard.js" defer></script>
+  <script src="assets/dashboard.js?v=ad-preview-zoom-1" defer></script>
 </body>
 </html>

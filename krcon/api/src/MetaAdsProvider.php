@@ -7,6 +7,13 @@ require_once __DIR__ . '/ServerHttpClient.php';
 /** Read-only adapter boundary for Meta Ads. Credentials are read only on the server. */
 final class MetaAdsProvider
 {
+    private array $previewDiagnostics = [];
+
+    public function getPreviewDiagnostics(): array
+    {
+        return $this->previewDiagnostics;
+    }
+
     public function readInsights(array $range, bool $includeAds = false): array
     {
         $token = api_env('META_ACCESS_TOKEN');
@@ -248,6 +255,7 @@ final class MetaAdsProvider
         string $token,
         array $reportAds
     ): array {
+        $this->previewDiagnostics = [];
         $wantedIds = [];
         foreach ($reportAds as $ad) {
             if (is_array($ad) && (string) ($ad['id'] ?? '') !== '') {
@@ -266,7 +274,7 @@ final class MetaAdsProvider
         // expanded creative fields for some accounts, even when Insights returns them.
         $adFields = 'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}';
         try {
-            $rows = $this->graphBatchGet($client, $baseUrl, $token, array_keys($wantedIds), $adFields);
+            $rows = $this->graphBatchGet($client, $baseUrl, $token, array_keys($wantedIds), $adFields, 'ad');
             foreach ($rows as $adId => $row) {
                 $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
                 if ($creative === []) {
@@ -379,7 +387,8 @@ final class MetaAdsProvider
                     $baseUrl,
                     $token,
                     array_keys($storyIds),
-                    'full_picture,attachments{media,subattachments}'
+                    'full_picture,attachments{media,subattachments}',
+                    'story'
                 );
                 foreach ($storyIdsByAd as $adId => $storyId) {
                     $story = $storyRows[$storyId] ?? [];
@@ -411,7 +420,8 @@ final class MetaAdsProvider
                     $baseUrl,
                     $token,
                     array_keys($instagramMediaIds),
-                    'media_type,media_url,thumbnail_url'
+                    'media_type,media_url,thumbnail_url',
+                    'instagram'
                 );
                 foreach ($instagramIdsByAd as $adId => $mediaId) {
                     $media = $mediaRows[$mediaId] ?? [];
@@ -436,7 +446,14 @@ final class MetaAdsProvider
         }
         foreach (array_chunk(array_values(array_unique($videoIdsByAd)), 50) as $videoIds) {
             try {
-                $videos = $this->graphBatchGet($client, $baseUrl, $token, $videoIds, 'picture,thumbnails');
+                $videos = $this->graphBatchGet(
+                    $client,
+                    $baseUrl,
+                    $token,
+                    $videoIds,
+                    'picture,thumbnails',
+                    'video'
+                );
                 foreach ($videoIdsByAd as $adId => $videoId) {
                     if (!empty($previews[$adId]['url'])) {
                         continue;
@@ -498,6 +515,13 @@ final class MetaAdsProvider
             }
         }
 
+        $this->previewDiagnostics['summary'] = [
+            'ad_rows' => count($wantedIds),
+            'previews' => count(array_filter(
+                $previews,
+                static fn(array $preview): bool => (string) ($preview['url'] ?? '') !== ''
+            )),
+        ];
         return $previews;
     }
 
@@ -507,7 +531,8 @@ final class MetaAdsProvider
         string $baseUrl,
         string $token,
         array $ids,
-        string $fields
+        string $fields,
+        string $label = 'media'
     ): array {
         $requests = [];
         $requestedIds = [];
@@ -538,12 +563,26 @@ final class MetaAdsProvider
             8
         );
         $rows = [];
+        $statusCodes = [];
+        $graphErrorCodes = [];
+        $decodedCount = 0;
         foreach ($response as $index => $item) {
-            if (!is_array($item) || (int) ($item['code'] ?? 0) < 200 || (int) ($item['code'] ?? 0) >= 300) {
+            if (!is_array($item)) {
                 continue;
             }
+            $status = (int) ($item['code'] ?? 0);
+            $statusCodes[(string) $status] = ($statusCodes[(string) $status] ?? 0) + 1;
             $body = json_decode((string) ($item['body'] ?? ''), true);
-            if (!is_array($body) || isset($body['error'])) {
+            if (!is_array($body)) {
+                continue;
+            }
+            $decodedCount++;
+            if (isset($body['error'])) {
+                $errorCode = (string) ($body['error']['code'] ?? 'unknown');
+                $graphErrorCodes[$errorCode] = ($graphErrorCodes[$errorCode] ?? 0) + 1;
+                continue;
+            }
+            if ($status < 200 || $status >= 300) {
                 continue;
             }
             $id = (string) ($body['id'] ?? $requestedIds[$index] ?? '');
@@ -551,6 +590,13 @@ final class MetaAdsProvider
                 $rows[$id] = $body;
             }
         }
+        $this->previewDiagnostics[$label] = [
+            'requests' => count($requests),
+            'status_codes' => $statusCodes,
+            'graph_error_codes' => $graphErrorCodes,
+            'decoded_bodies' => $decodedCount,
+            'objects' => count($rows),
+        ];
         return $rows;
     }
 

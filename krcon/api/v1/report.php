@@ -20,6 +20,7 @@ if (!in_array($period, $allowedPeriods, true)) {
 $customRange = null;
 $cachePeriod = $period;
 $includeMetaAds = isset($_GET['include_meta_ads']) && $_GET['include_meta_ads'] === '1';
+$debugPreviews = isset($_GET['debug_previews']) && $_GET['debug_previews'] === '1';
 if ($period === 'custom') {
     $since = isset($_GET['since']) && is_string($_GET['since']) ? $_GET['since'] : '';
     $until = isset($_GET['until']) && is_string($_GET['until']) ? $_GET['until'] : '';
@@ -48,6 +49,13 @@ if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
     $cached = json_decode((string) file_get_contents($cacheFile), true);
     if (is_array($cached)) {
+        if ($debugPreviews && $includeMetaAds && is_array($cached['data']['meta']['ads'] ?? null)) {
+            $metaProvider = new MetaAdsProvider();
+            $cached['data']['meta']['ads'] = $metaProvider->enrichCreativePreviews(
+                $cached['data']['meta']['ads']
+            );
+            $cached['data']['meta']['preview_diagnostics'] = $metaProvider->getPreviewDiagnostics();
+        }
         api_json(200, $cached);
     }
 }

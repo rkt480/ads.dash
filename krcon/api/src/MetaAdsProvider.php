@@ -259,132 +259,53 @@ final class MetaAdsProvider
         }
 
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/';
-        $fieldsOptions = [
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
-        ];
         $previews = [];
-        $creativeIdsByAd = [];
         $resolvedAdIds = [];
 
         // Fetch each ad node in one Graph batch. Multi-ID reads can silently omit
         // expanded creative fields for some accounts, even when Insights returns them.
-        $batchAdFieldOptions = [
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id}',
-        ];
-        $batchMissingAdIds = array_keys($wantedIds);
-        foreach ($batchAdFieldOptions as $fields) {
-            foreach (array_chunk($batchMissingAdIds, 50) as $adIds) {
-                try {
-                    $rows = $this->graphBatchGet($client, $baseUrl, $token, $adIds, $fields);
-                    foreach ($adIds as $adId) {
-                        $row = $rows[$adId] ?? null;
-                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
-                        if ($creative === []) {
-                            continue;
-                        }
-                        $preview = $this->normalizeCreativePreview($creative);
-                        $previews[$adId] = $preview;
-                        $resolvedAdIds[$adId] = true;
-                        $creativeId = (string) ($creative['id'] ?? '');
-                        if ($creativeId !== '' && $preview['url'] === '') {
-                            $creativeIdsByAd[$adId] = $creativeId;
-                        }
-                    }
-                } catch (UpstreamApiFailure $error) {
-                    // Continue with the next compatible field set.
+        $adFields = 'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}';
+        try {
+            $rows = $this->graphBatchGet($client, $baseUrl, $token, array_keys($wantedIds), $adFields);
+            foreach ($rows as $adId => $row) {
+                $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
+                if ($creative === []) {
+                    continue;
                 }
+                $previews[$adId] = $this->normalizeCreativePreview($creative);
+                $resolvedAdIds[$adId] = true;
             }
-            $batchMissingAdIds = array_values(array_diff(array_keys($wantedIds), array_keys($resolvedAdIds)));
-            if ($batchMissingAdIds === []) {
-                break;
-            }
+        } catch (UpstreamApiFailure $error) {
+            // Fall back to a single multi-ID read below.
         }
 
         // Request only the ad IDs present in the report, in bounded batches.
         $missingAdIds = array_values(array_diff(array_keys($wantedIds), array_keys($resolvedAdIds)));
         foreach (array_chunk($missingAdIds, 50) as $adIds) {
-            foreach ($fieldsOptions as $fields) {
-                try {
-                    $url = $baseUrl . '?' . http_build_query(
-                        ['ids' => implode(',', $adIds), 'fields' => $fields],
-                        '',
-                        '&',
-                        PHP_QUERY_RFC3986
-                    );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
-                    $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
-                    $foundCreative = false;
-                    foreach ($rows as $key => $row) {
-                        if (!is_array($row) || isset($row['error'])) {
-                            continue;
-                        }
-                        $id = (string) ($row['id'] ?? $key);
-                        if (!isset($wantedIds[$id])) {
-                            continue;
-                        }
-                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
-                        if ($creative === []) {
-                            continue;
-                        }
-                        $foundCreative = true;
-                        $preview = $this->normalizeCreativePreview($creative);
-                        $previews[$id] = $preview;
-                        $resolvedAdIds[$id] = true;
-                        $creativeId = (string) ($creative['id'] ?? '');
-                        if ($creativeId !== '' && $preview['url'] === '') {
-                            $creativeIdsByAd[$id] = $creativeId;
-                        }
+            try {
+                $url = $baseUrl . '?' . http_build_query(
+                    ['ids' => implode(',', $adIds), 'fields' => $adFields],
+                    '',
+                    '&',
+                    PHP_QUERY_RFC3986
+                );
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 8);
+                $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
+                foreach ($rows as $key => $row) {
+                    if (!is_array($row) || isset($row['error'])) {
+                        continue;
                     }
-                    if ($foundCreative) {
-                        break;
+                    $id = (string) ($row['id'] ?? $key);
+                    if (!isset($wantedIds[$id])) {
+                        continue;
                     }
-                } catch (UpstreamApiFailure $error) {
-                    // Try the next compatible field set.
+                    $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
+                    if ($creative !== []) {
+                        $previews[$id] = $this->normalizeCreativePreview($creative);
+                    }
                 }
-            }
-        }
-
-        // Resolve missing thumbnails by creative ID in batches instead of one request per ad.
-        $creativeFieldsOptions = [
-            'id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec',
-            'id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec',
-        ];
-        foreach (array_chunk(array_values(array_unique($creativeIdsByAd)), 50) as $creativeIds) {
-            foreach ($creativeFieldsOptions as $fields) {
-                try {
-                    $url = $baseUrl . '?' . http_build_query(
-                        ['ids' => implode(',', $creativeIds), 'fields' => $fields],
-                        '',
-                        '&',
-                        PHP_QUERY_RFC3986
-                    );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
-                    $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
-                    $creativesById = [];
-                    foreach ($rows as $key => $creative) {
-                        if (!is_array($creative) || isset($creative['error'])) {
-                            continue;
-                        }
-                        $creativeId = (string) ($creative['id'] ?? $key);
-                        $creativesById[$creativeId] = $creative;
-                    }
-                    foreach ($creativeIdsByAd as $adId => $creativeId) {
-                        $creative = $creativesById[$creativeId] ?? null;
-                        if (!is_array($creative)) {
-                            continue;
-                        }
-                        $preview = $this->normalizeCreativePreview($creative);
-                        $previews[$adId] = $preview;
-                    }
-                    if ($creativesById !== []) {
-                        break;
-                    }
-                } catch (UpstreamApiFailure $error) {
-                    // Try the next compatible field set.
-                }
+            } catch (UpstreamApiFailure $error) {
+                // Continue with any ad previews already resolved by the batch read.
             }
         }
 
@@ -411,7 +332,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 8);
                 $imageUrlsByHash = [];
                 foreach ($response['data'] ?? [] as $image) {
                     if (!is_array($image)) {
@@ -537,7 +458,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 8);
                     $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
                     $videoImages = [];
                     foreach ($rows as $key => $video) {
@@ -614,7 +535,7 @@ final class MetaAdsProvider
             $baseUrl,
             ['batch' => json_encode($requests, JSON_UNESCAPED_SLASHES)],
             ['Authorization: Bearer ' . $token],
-            20
+            8
         );
         $rows = [];
         foreach ($response as $index => $item) {

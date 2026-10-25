@@ -42,7 +42,7 @@ $cacheAccountScope = implode("\0", [
 ]);
 $cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
 $cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
-    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v8-' . $cachePeriod . '.json';
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v9-' . $cachePeriod . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
@@ -54,9 +54,9 @@ if (is_file($cacheFile) && is_readable($cacheFile)
 
 // Reuse the recent metrics snapshot when only the creative-preview lookup changed.
 if ($includeMetaAds) {
-    $previousCacheMaxAge = 15 * 60;
-    foreach (['v7', 'v6'] as $previousVersion) {
-        $previousCacheFile = str_replace('-v8-', '-' . $previousVersion . '-', $cacheFile);
+    $previousCacheMaxAge = 6 * 60 * 60;
+    foreach (['v8', 'v7', 'v6'] as $previousVersion) {
+        $previousCacheFile = str_replace('-v9-', '-' . $previousVersion . '-', $cacheFile);
         if (!is_file($previousCacheFile) || !is_readable($previousCacheFile)
             || (time() - (int) filemtime($previousCacheFile)) >= $previousCacheMaxAge) {
             continue;

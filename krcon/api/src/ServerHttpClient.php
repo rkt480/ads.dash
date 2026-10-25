@@ -21,13 +21,15 @@ final class ServerHttpClient
         return $this->send($url, 'POST', $headers, $encoded);
     }
 
-    public function postForm(string $url, array $fields): array
+    public function postForm(string $url, array $fields, array $headers = [], int $timeoutSeconds = 25): array
     {
+        $headers[] = 'Content-Type: application/x-www-form-urlencoded';
         return $this->send(
             $url,
             'POST',
-            ['Content-Type: application/x-www-form-urlencoded'],
-            http_build_query($fields, '', '&', PHP_QUERY_RFC3986)
+            $headers,
+            http_build_query($fields, '', '&', PHP_QUERY_RFC3986),
+            $timeoutSeconds
         );
     }
 

@@ -260,12 +260,48 @@ final class MetaAdsProvider
 
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/';
         $fieldsOptions = [
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
         ];
         $previews = [];
         $creativeIdsByAd = [];
         $resolvedAdIds = [];
+
+        // Fetch each ad node in one Graph batch. Multi-ID reads can silently omit
+        // expanded creative fields for some accounts, even when Insights returns them.
+        $batchAdFieldOptions = [
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id}',
+        ];
+        $batchMissingAdIds = array_keys($wantedIds);
+        foreach ($batchAdFieldOptions as $fields) {
+            foreach (array_chunk($batchMissingAdIds, 50) as $adIds) {
+                try {
+                    $rows = $this->graphBatchGet($client, $baseUrl, $token, $adIds, $fields);
+                    foreach ($adIds as $adId) {
+                        $row = $rows[$adId] ?? null;
+                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
+                        if ($creative === []) {
+                            continue;
+                        }
+                        $preview = $this->normalizeCreativePreview($creative);
+                        $previews[$adId] = $preview;
+                        $resolvedAdIds[$adId] = true;
+                        $creativeId = (string) ($creative['id'] ?? '');
+                        if ($creativeId !== '' && $preview['url'] === '') {
+                            $creativeIdsByAd[$adId] = $creativeId;
+                        }
+                    }
+                } catch (UpstreamApiFailure $error) {
+                    // Continue with the next compatible field set.
+                }
+            }
+            $batchMissingAdIds = array_values(array_diff(array_keys($wantedIds), array_keys($resolvedAdIds)));
+            if ($batchMissingAdIds === []) {
+                break;
+            }
+        }
 
         // Request only the ad IDs present in the report, in bounded batches.
         $missingAdIds = array_values(array_diff(array_keys($wantedIds), array_keys($resolvedAdIds)));
@@ -313,8 +349,8 @@ final class MetaAdsProvider
 
         // Resolve missing thumbnails by creative ID in batches instead of one request per ad.
         $creativeFieldsOptions = [
-            'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec',
-            'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec',
+            'id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec,asset_feed_spec',
+            'id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec',
         ];
         foreach (array_chunk(array_values(array_unique($creativeIdsByAd)), 50) as $creativeIds) {
             foreach ($creativeFieldsOptions as $fields) {
@@ -405,6 +441,72 @@ final class MetaAdsProvider
             }
         }
 
+        $storyIdsByAd = [];
+        $storyIds = [];
+        foreach ($previews as $adId => $preview) {
+            $storyId = (string) ($preview['story_id'] ?? '');
+            if (($preview['url'] ?? '') !== '' || $storyId === '') {
+                continue;
+            }
+            $storyIdsByAd[$adId] = $storyId;
+            $storyIds[$storyId] = true;
+        }
+        if ($storyIds !== []) {
+            try {
+                $storyRows = $this->graphBatchGet(
+                    $client,
+                    $baseUrl,
+                    $token,
+                    array_keys($storyIds),
+                    'full_picture,attachments{media,subattachments}'
+                );
+                foreach ($storyIdsByAd as $adId => $storyId) {
+                    $story = $storyRows[$storyId] ?? [];
+                    $url = $this->storyPreviewUrl($story);
+                    if ($url !== '') {
+                        $previews[$adId]['url'] = $url;
+                        $previews[$adId]['type'] = $previews[$adId]['type'] ?: 'image';
+                    }
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Existing-post ads may not expose post media to this token.
+            }
+        }
+
+        $instagramIdsByAd = [];
+        $instagramMediaIds = [];
+        foreach ($previews as $adId => $preview) {
+            $instagramMediaId = (string) ($preview['instagram_media_id'] ?? '');
+            if (($preview['url'] ?? '') !== '' || $instagramMediaId === '') {
+                continue;
+            }
+            $instagramIdsByAd[$adId] = $instagramMediaId;
+            $instagramMediaIds[$instagramMediaId] = true;
+        }
+        if ($instagramMediaIds !== []) {
+            try {
+                $mediaRows = $this->graphBatchGet(
+                    $client,
+                    $baseUrl,
+                    $token,
+                    array_keys($instagramMediaIds),
+                    'media_type,media_url,thumbnail_url'
+                );
+                foreach ($instagramIdsByAd as $adId => $mediaId) {
+                    $media = $mediaRows[$mediaId] ?? [];
+                    $url = $this->safeMediaUrl($media['thumbnail_url'] ?? '')
+                        ?: $this->safeMediaUrl($media['media_url'] ?? '');
+                    if ($url !== '') {
+                        $previews[$adId]['url'] = $url;
+                        $previews[$adId]['type'] = strtoupper((string) ($media['media_type'] ?? '')) === 'VIDEO'
+                            ? 'video' : 'image';
+                    }
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Some Meta tokens cannot read Instagram media nodes.
+            }
+        }
+
         $videoIdsByAd = [];
         foreach ($previews as $adId => $preview) {
             if (($preview['url'] ?? '') === '' && !empty($preview['video_id'])) {
@@ -412,6 +514,21 @@ final class MetaAdsProvider
             }
         }
         foreach (array_chunk(array_values(array_unique($videoIdsByAd)), 50) as $videoIds) {
+            try {
+                $videos = $this->graphBatchGet($client, $baseUrl, $token, $videoIds, 'picture,thumbnails');
+                foreach ($videoIdsByAd as $adId => $videoId) {
+                    if (!empty($previews[$adId]['url'])) {
+                        continue;
+                    }
+                    $imageUrl = $this->videoPreviewUrl($videos[$videoId] ?? []);
+                    if ($imageUrl !== '') {
+                        $previews[$adId]['url'] = $imageUrl;
+                        $previews[$adId]['type'] = 'video';
+                    }
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Retry the same nodes with the multi-ID read below.
+            }
             foreach (['id,picture,thumbnails', 'id,picture'] as $fields) {
                 try {
                     $url = $baseUrl . '?' . http_build_query(
@@ -461,6 +578,113 @@ final class MetaAdsProvider
         }
 
         return $previews;
+    }
+
+    /** @return array<string, array> */
+    private function graphBatchGet(
+        ServerHttpClient $client,
+        string $baseUrl,
+        string $token,
+        array $ids,
+        string $fields
+    ): array {
+        $requests = [];
+        $requestedIds = [];
+        foreach (array_values(array_unique($ids)) as $id) {
+            $id = (string) $id;
+            if ($id === '') {
+                continue;
+            }
+            $requests[] = [
+                'method' => 'GET',
+                'relative_url' => rawurlencode($id) . '?' . http_build_query(
+                    ['fields' => $fields],
+                    '',
+                    '&',
+                    PHP_QUERY_RFC3986
+                ),
+            ];
+            $requestedIds[] = $id;
+        }
+        if ($requests === []) {
+            return [];
+        }
+
+        $response = $client->postForm(
+            $baseUrl,
+            ['batch' => json_encode($requests, JSON_UNESCAPED_SLASHES)],
+            ['Authorization: Bearer ' . $token],
+            20
+        );
+        $rows = [];
+        foreach ($response as $index => $item) {
+            if (!is_array($item) || (int) ($item['code'] ?? 0) < 200 || (int) ($item['code'] ?? 0) >= 300) {
+                continue;
+            }
+            $body = json_decode((string) ($item['body'] ?? ''), true);
+            if (!is_array($body) || isset($body['error'])) {
+                continue;
+            }
+            $id = (string) ($body['id'] ?? $requestedIds[$index] ?? '');
+            if ($id !== '') {
+                $rows[$id] = $body;
+            }
+        }
+        return $rows;
+    }
+
+    private function storyPreviewUrl(array $story): string
+    {
+        $url = $this->safeMediaUrl($story['full_picture'] ?? '');
+        $attachments = is_array($story['attachments']['data'] ?? null)
+            ? $story['attachments']['data'] : [];
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) {
+                continue;
+            }
+            $media = is_array($attachment['media'] ?? null) ? $attachment['media'] : [];
+            $image = is_array($media['image'] ?? null) ? $media['image'] : [];
+            $url = $url
+                ?: $this->safeMediaUrl($image['src'] ?? '')
+                ?: $this->safeMediaUrl($media['thumbnail']['src'] ?? '');
+            if ($url !== '') {
+                return $url;
+            }
+            $subattachments = is_array($attachment['subattachments']['data'] ?? null)
+                ? $attachment['subattachments']['data'] : [];
+            foreach ($subattachments as $subattachment) {
+                if (!is_array($subattachment)) {
+                    continue;
+                }
+                $subMedia = is_array($subattachment['media'] ?? null) ? $subattachment['media'] : [];
+                $subImage = is_array($subMedia['image'] ?? null) ? $subMedia['image'] : [];
+                $url = $this->safeMediaUrl($subImage['src'] ?? '')
+                    ?: $this->safeMediaUrl($subMedia['thumbnail']['src'] ?? '');
+                if ($url !== '') {
+                    return $url;
+                }
+            }
+        }
+        return $url;
+    }
+
+    private function videoPreviewUrl(array $video): string
+    {
+        $url = $this->safeMediaUrl($video['picture'] ?? '');
+        $thumbnails = is_array($video['thumbnails'] ?? null)
+            ? ($video['thumbnails']['data'] ?? $video['thumbnails']) : [];
+        if ($url === '' && is_array($thumbnails)) {
+            foreach ($thumbnails as $thumbnail) {
+                if (!is_array($thumbnail)) {
+                    continue;
+                }
+                $url = $this->safeMediaUrl($thumbnail['uri'] ?? '');
+                if ($url !== '') {
+                    break;
+                }
+            }
+        }
+        return $url;
     }
 
     private function normalizeCreativePreview(array $creative): array
@@ -539,11 +763,14 @@ final class MetaAdsProvider
                 }
             }
         }
+        $storyId = (string) ($creative['effective_object_story_id'] ?? $creative['object_story_id'] ?? '');
 
         return [
             'url' => $url,
             'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
             'video_id' => $videoId,
+            'story_id' => $storyId,
+            'instagram_media_id' => (string) ($creative['effective_instagram_media_id'] ?? ''),
             'image_hashes' => array_keys($imageHashes),
         ];
     }

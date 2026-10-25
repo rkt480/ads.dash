@@ -215,73 +215,12 @@ final class MetaAdsProvider
         $fieldsOptions = [
             'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec}',
             'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,video_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,image_hash,video_id}',
-            'id,creative{id,thumbnail_url}',
         ];
         $previews = [];
         $creativeIdsByAd = [];
-        $foundAdIds = [];
         $resolvedAdIds = [];
 
-        // Read only the report's ads from the account edge; this is more widely
-        // supported than Graph's multi-ID lookup for expanded creative fields.
-        foreach ($fieldsOptions as $fields) {
-            $params = ['fields' => $fields, 'limit' => '500'];
-            $after = null;
-            $fieldSetSucceeded = false;
-            try {
-                for ($page = 0; $page < 20; $page++) {
-                    if ($after !== null) {
-                        $params['after'] = $after;
-                    }
-                    $url = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads?'
-                        . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
-                    $fieldSetSucceeded = true;
-                    $rows = $response['data'] ?? [];
-                    if (!is_array($rows)) {
-                        break;
-                    }
-                    foreach ($rows as $row) {
-                        if (!is_array($row)) {
-                            continue;
-                        }
-                        $id = (string) ($row['id'] ?? '');
-                        if ($id === '' || !isset($wantedIds[$id])) {
-                            continue;
-                        }
-                        $foundAdIds[$id] = true;
-                        $creative = is_array($row['creative'] ?? null) ? $row['creative'] : [];
-                        if ($creative === []) {
-                            continue;
-                        }
-                        $resolvedAdIds[$id] = true;
-                        $preview = $this->normalizeCreativePreview($creative);
-                        $previews[$id] = $preview;
-                        $creativeId = (string) ($creative['id'] ?? '');
-                        if ($creativeId !== '' && $preview['url'] === '') {
-                            $creativeIdsByAd[$id] = $creativeId;
-                        }
-                    }
-                    if (count($foundAdIds) >= count($wantedIds)) {
-                        break 2;
-                    }
-                    $nextAfter = $response['paging']['cursors']['after'] ?? null;
-                    if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
-                        break;
-                    }
-                    $after = $nextAfter;
-                }
-            } catch (UpstreamApiFailure $error) {
-                // Retry with fewer fields for Graph API versions with narrower field support.
-            }
-            if ($fieldSetSucceeded) {
-                break;
-            }
-        }
-
-        // Resolve ads omitted from the account edge through multi-ID lookup.
+        // Request only the ad IDs present in the report, in bounded batches.
         $missingAdIds = array_values(array_diff(array_keys($wantedIds), array_keys($resolvedAdIds)));
         foreach (array_chunk($missingAdIds, 50) as $adIds) {
             foreach ($fieldsOptions as $fields) {
@@ -292,7 +231,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
                     $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
                     $foundCreative = false;
                     foreach ($rows as $key => $row) {
@@ -329,9 +268,6 @@ final class MetaAdsProvider
         $creativeFieldsOptions = [
             'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec',
             'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec',
-            'id,thumbnail_url,image_url,image_hash,video_id,object_story_spec',
-            'id,thumbnail_url,image_url,image_hash,video_id',
-            'id,thumbnail_url',
         ];
         foreach (array_chunk(array_values(array_unique($creativeIdsByAd)), 50) as $creativeIds) {
             foreach ($creativeFieldsOptions as $fields) {
@@ -342,7 +278,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
                     $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
                     $creativesById = [];
                     foreach ($rows as $key => $creative) {
@@ -392,7 +328,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
                 $imageUrlsByHash = [];
                 foreach ($response['data'] ?? [] as $image) {
                     if (!is_array($image)) {
@@ -437,7 +373,7 @@ final class MetaAdsProvider
                         '&',
                         PHP_QUERY_RFC3986
                     );
-                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
+                    $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 12);
                     $rows = is_array($response['data'] ?? null) ? $response['data'] : $response;
                     $videoImages = [];
                     foreach ($rows as $key => $video) {

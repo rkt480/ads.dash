@@ -213,10 +213,10 @@ final class MetaAdsProvider
 
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/';
         $fieldsOptions = [
-            'id,creative{id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec}',
-            'id,creative{id,thumbnail_url,image_url,object_type,video_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,video_id,object_story_spec}',
-            'id,creative{id,thumbnail_url,image_url,video_id}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,video_id,object_story_spec}',
+            'id,creative{id,thumbnail_url,image_url,image_hash,video_id}',
             'id,creative{id,thumbnail_url}',
         ];
         $previews = [];
@@ -327,10 +327,10 @@ final class MetaAdsProvider
 
         // Resolve missing thumbnails by creative ID in batches instead of one request per ad.
         $creativeFieldsOptions = [
-            'id,thumbnail_url,image_url,object_type,video_id,object_story_spec,asset_feed_spec',
-            'id,thumbnail_url,image_url,object_type,video_id,object_story_spec',
-            'id,thumbnail_url,image_url,video_id,object_story_spec',
-            'id,thumbnail_url,image_url,video_id',
+            'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec,asset_feed_spec',
+            'id,thumbnail_url,image_url,image_hash,object_type,video_id,object_story_spec',
+            'id,thumbnail_url,image_url,image_hash,video_id,object_story_spec',
+            'id,thumbnail_url,image_url,image_hash,video_id',
             'id,thumbnail_url',
         ];
         foreach (array_chunk(array_values(array_unique($creativeIdsByAd)), 50) as $creativeIds) {
@@ -358,9 +358,7 @@ final class MetaAdsProvider
                             continue;
                         }
                         $preview = $this->normalizeCreativePreview($creative);
-                        if ($preview['url'] !== '') {
-                            $previews[$adId] = $preview;
-                        }
+                        $previews[$adId] = $preview;
                     }
                     if ($creativesById !== []) {
                         break;
@@ -368,6 +366,59 @@ final class MetaAdsProvider
                 } catch (UpstreamApiFailure $error) {
                     // Try the next compatible field set.
                 }
+            }
+        }
+
+        $imageHashesByAd = [];
+        $imageHashes = [];
+        foreach ($previews as $adId => $preview) {
+            if (($preview['url'] ?? '') !== '' || empty($preview['image_hashes'])) {
+                continue;
+            }
+            $imageHashesByAd[$adId] = $preview['image_hashes'];
+            foreach ($preview['image_hashes'] as $hash) {
+                $imageHashes[$hash] = true;
+            }
+        }
+        foreach (array_chunk(array_keys($imageHashes), 50) as $hashes) {
+            try {
+                $url = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/adimages?'
+                    . http_build_query(
+                        [
+                            'hashes' => json_encode($hashes, JSON_UNESCAPED_SLASHES),
+                            'fields' => 'hash,url',
+                        ],
+                        '',
+                        '&',
+                        PHP_QUERY_RFC3986
+                    );
+                $response = $client->getJson($url, ['Authorization: Bearer ' . $token], 15);
+                $imageUrlsByHash = [];
+                foreach ($response['data'] ?? [] as $image) {
+                    if (!is_array($image)) {
+                        continue;
+                    }
+                    $hash = (string) ($image['hash'] ?? '');
+                    $imageUrl = $this->safeMediaUrl($image['url'] ?? '');
+                    if ($hash !== '' && $imageUrl !== '') {
+                        $imageUrlsByHash[$hash] = $imageUrl;
+                    }
+                }
+                foreach ($imageHashesByAd as $adId => $adHashes) {
+                    if (!empty($previews[$adId]['url'])) {
+                        continue;
+                    }
+                    foreach ($adHashes as $hash) {
+                        if (isset($imageUrlsByHash[$hash])) {
+                            $previews[$adId]['url'] = $imageUrlsByHash[$hash];
+                            $previews[$adId]['type'] = $previews[$adId]['type'] ?: 'image';
+                            break;
+                        }
+                    }
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Keep any thumbnails already resolved when image-hash lookup fails.
+                break;
             }
         }
 
@@ -436,6 +487,17 @@ final class MetaAdsProvider
         $linkData = is_array($story['link_data'] ?? null) ? $story['link_data'] : [];
         $photoData = is_array($story['photo_data'] ?? null) ? $story['photo_data'] : [];
         $assetFeed = is_array($creative['asset_feed_spec'] ?? null) ? $creative['asset_feed_spec'] : [];
+        $imageHashes = [];
+        foreach ([
+            $creative['image_hash'] ?? '',
+            $videoData['image_hash'] ?? '',
+            $linkData['image_hash'] ?? '',
+            $photoData['image_hash'] ?? '',
+        ] as $imageHash) {
+            if (is_string($imageHash) && $imageHash !== '') {
+                $imageHashes[$imageHash] = true;
+            }
+        }
 
         $url = $this->safeMediaUrl($creative['thumbnail_url'] ?? '')
             ?: $this->safeMediaUrl($creative['image_url'] ?? '')
@@ -447,6 +509,10 @@ final class MetaAdsProvider
             foreach ($linkData['child_attachments'] as $attachment) {
                 if (!is_array($attachment)) {
                     continue;
+                }
+                $attachmentHash = (string) ($attachment['image_hash'] ?? '');
+                if ($attachmentHash !== '') {
+                    $imageHashes[$attachmentHash] = true;
                 }
                 $url = $this->safeMediaUrl($attachment['picture'] ?? '')
                     ?: $this->safeMediaUrl($attachment['image_url'] ?? '');
@@ -462,6 +528,10 @@ final class MetaAdsProvider
                 foreach ($assets as $asset) {
                     if (!is_array($asset)) {
                         continue;
+                    }
+                    $assetHash = (string) ($asset['hash'] ?? '');
+                    if ($assetType === 'images' && $assetHash !== '') {
+                        $imageHashes[$assetHash] = true;
                     }
                     $url = $this->safeMediaUrl($asset['thumbnail_url'] ?? '')
                         ?: $this->safeMediaUrl($asset['image_url'] ?? '')
@@ -491,6 +561,7 @@ final class MetaAdsProvider
             'url' => $url,
             'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
             'video_id' => $videoId,
+            'image_hashes' => array_keys($imageHashes),
         ];
     }
 

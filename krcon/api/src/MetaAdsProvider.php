@@ -107,6 +107,53 @@ final class MetaAdsProvider
         ];
     }
 
+    /** Refresh only the media fields for ad rows already present in a recent report cache. */
+    public function enrichCreativePreviews(array $ads): array
+    {
+        if ($ads === []) {
+            return $ads;
+        }
+
+        $token = api_env('META_ACCESS_TOKEN');
+        $accountId = api_env('META_AD_ACCOUNT_ID');
+        $apiVersion = api_env('META_API_VERSION');
+        if ($token === null || $accountId === null || $apiVersion === null) {
+            return $ads;
+        }
+
+        $accountId = preg_replace('/^act_/', '', $accountId);
+        if (!is_string($accountId) || !preg_match('/^[0-9]+$/D', $accountId)
+            || !preg_match('/^v[0-9]+\.[0-9]+$/D', $apiVersion)) {
+            return $ads;
+        }
+
+        try {
+            $previews = $this->adCreativePreviews(
+                new ServerHttpClient(),
+                $accountId,
+                $apiVersion,
+                $token,
+                $ads
+            );
+        } catch (Throwable $error) {
+            return $ads;
+        }
+
+        foreach ($ads as &$ad) {
+            if (!is_array($ad)) {
+                continue;
+            }
+            $preview = $previews[(string) ($ad['id'] ?? '')] ?? [];
+            if (($preview['url'] ?? '') !== '') {
+                $ad['preview_url'] = $preview['url'];
+                $ad['media_type'] = $preview['type'] ?? '';
+            }
+        }
+        unset($ad);
+
+        return $ads;
+    }
+
     private function readAdInsights(
         ServerHttpClient $client,
         string $accountId,

@@ -267,7 +267,7 @@
     .modal-explainer { margin: 14px 0 0; padding: 12px; border-radius: 9px; color: #6c7990; background: #f4f7fc; font-size: 10px; line-height: 1.55; }
     .ad-preview-modal { display: flex; width: min(960px, 100%); max-height: calc(100vh - 40px); flex-direction: column; }
     .ad-preview-modal-body { position: relative; display: grid; min-height: 150px; max-height: calc(100vh - 140px); padding: 16px; place-items: center; overflow: auto; background: #141b26; }
-    .ad-preview-expanded { display: block; max-width: 100%; max-height: calc(100vh - 180px); object-fit: contain; }
+    .ad-preview-expanded { display: block; width: min(100%, 820px); max-height: calc(100vh - 180px); object-fit: contain; }
     .ad-preview-expanded-badge { position: absolute; right: 24px; bottom: 24px; padding: 6px 9px; border-radius: 4px; color: #fff; background: rgba(25, 34, 47, .82); font-size: 10px; font-weight: 700; }
     .toast { position: fixed; right: 24px; bottom: 23px; z-index: 80; display: flex; align-items: center; gap: 8px; padding: 11px 14px; border: 1px solid #dce8e2; border-radius: 10px; color: #39785f; background: #fff; box-shadow: 0 8px 24px rgba(20,34,56,.1); font-size: 11px; animation: modal-in .15s ease-out; }
     .toast svg { width: 15px; height: 15px; }
@@ -356,7 +356,7 @@
       .modal-backdrop { padding: 12px; }
       .ad-preview-modal { max-height: calc(100vh - 24px); }
       .ad-preview-modal-body { max-height: calc(100vh - 112px); padding: 10px; }
-      .ad-preview-expanded { max-height: calc(100vh - 140px); }
+      .ad-preview-expanded { width: 100%; max-height: calc(100vh - 140px); }
       .ad-preview-expanded-badge { right: 17px; bottom: 17px; }
     }
     @media (max-width: 900px) {
@@ -490,6 +490,6 @@
   </div>
   <div id="modalRoot"></div>
 
-  <script src="assets/dashboard.js?v=ad-preview-zoom-1" defer></script>
+  <script src="assets/dashboard.js?v=ad-preview-zoom-2" defer></script>
 </body>
 </html>

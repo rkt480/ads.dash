@@ -20,6 +20,7 @@ if (!in_array($period, $allowedPeriods, true)) {
 $customRange = null;
 $cachePeriod = $period;
 $includeMetaAds = isset($_GET['include_meta_ads']) && $_GET['include_meta_ads'] === '1';
+$refreshPreviews = $includeMetaAds && isset($_GET['refresh_previews']) && $_GET['refresh_previews'] === '1';
 if ($period === 'custom') {
     $since = isset($_GET['since']) && is_string($_GET['since']) ? $_GET['since'] : '';
     $until = isset($_GET['until']) && is_string($_GET['until']) ? $_GET['until'] : '';
@@ -42,12 +43,25 @@ $cacheAccountScope = implode("\0", [
 ]);
 $cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
 $cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
-    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v9-' . $cachePeriod . '.json';
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v10-' . $cachePeriod . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
     $cached = json_decode((string) file_get_contents($cacheFile), true);
     if (is_array($cached)) {
+        if ($refreshPreviews && is_array($cached['data']['meta']['ads'] ?? null)) {
+            $cached['data']['meta']['ads'] = (new MetaAdsProvider())->enrichCreativePreviews(
+                $cached['data']['meta']['ads']
+            );
+            if (is_dir($cacheDirectory) && is_writable($cacheDirectory)) {
+                @file_put_contents(
+                    $cacheFile,
+                    json_encode($cached, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    LOCK_EX
+                );
+                @chmod($cacheFile, 0600);
+            }
+        }
         api_json(200, $cached);
     }
 }
@@ -55,8 +69,8 @@ if (is_file($cacheFile) && is_readable($cacheFile)
 // Reuse the recent metrics snapshot when only the creative-preview lookup changed.
 if ($includeMetaAds) {
     $previousCacheMaxAge = 6 * 60 * 60;
-    foreach (['v8', 'v7', 'v6'] as $previousVersion) {
-        $previousCacheFile = str_replace('-v9-', '-' . $previousVersion . '-', $cacheFile);
+    foreach (['v9', 'v8', 'v7', 'v6'] as $previousVersion) {
+        $previousCacheFile = str_replace('-v10-', '-' . $previousVersion . '-', $cacheFile);
         if (!is_file($previousCacheFile) || !is_readable($previousCacheFile)
             || (time() - (int) filemtime($previousCacheFile)) >= $previousCacheMaxAge) {
             continue;

@@ -18,7 +18,8 @@
     collapsed: false,
     mobileOpen: false,
     selectedCampaign: null,
-    selectedAdPreview: false,
+    selectedAdPreview: null,
+    previewRefreshAttempted: false,
     loading: false,
     error: null,
     integrations: { meta: "unknown", google: "unknown" },
@@ -28,6 +29,7 @@
   let campaigns = [];
   let metaAds = [];
   let metaAdsStatus = "unknown";
+  let previewRefreshInFlight = false;
 
   const money = value => new Intl.NumberFormat("pt-BR", {
     style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2
@@ -385,7 +387,7 @@
     const alt = "Prévia do anúncio: " + ad.name;
     const fallback = '<span class="ad-preview-fallback">Prévia indisponível</span>';
     const media = ad.previewUrl
-      ? '<button class="ad-preview-trigger" type="button" data-action="preview-ad" data-preview-url="' + escapeHtml(ad.previewUrl) + '" data-preview-type="' + escapeHtml(ad.mediaType) + '" data-preview-name="' + escapeHtml(ad.name) + '" aria-label="Ampliar prévia do anúncio: ' + escapeHtml(ad.name) + '" title="Clique para ampliar"><img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span></button>'
+      ? '<button class="ad-preview-trigger" type="button" data-action="preview-ad" data-preview-id="' + escapeHtml(ad.id) + '" data-preview-url="' + escapeHtml(ad.previewUrl) + '" data-preview-type="' + escapeHtml(ad.mediaType) + '" data-preview-name="' + escapeHtml(ad.name) + '" aria-label="Ampliar prévia do anúncio: ' + escapeHtml(ad.name) + '" title="Clique para ampliar"><img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span></button>'
       : fallback;
     const videoBadge = ad.mediaType === "video" ? '<span class="ad-video-badge">Vídeo</span>' : '';
     return '<td class="ad-preview-cell"><div class="ad-preview-details"><div class="ad-preview-frame">' + media + videoBadge + '</div>'
@@ -496,11 +498,11 @@
     if (closeButton) closeButton.focus();
   }
 
-  function showAdPreview(name, url, mediaType) {
+  function showAdPreview(name, url, mediaType, adId) {
     if (!url) return;
     const isVideo = mediaType === "video";
     document.getElementById("modalRoot").innerHTML = '<div class="modal-backdrop" data-action="close-modal"><section class="campaign-modal ad-preview-modal" role="dialog" aria-modal="true" aria-labelledby="adPreviewTitle" data-modal-content><div class="modal-header"><div><h2 class="modal-title" id="adPreviewTitle">' + escapeHtml(name) + '</h2><p class="modal-subtitle">' + (isVideo ? 'Miniatura do vídeo' : 'Imagem do anúncio') + '</p></div><button class="icon-button modal-close" type="button" aria-label="Fechar prévia" data-action="close-modal-button">✕</button></div><div class="ad-preview-modal-body"><img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<span class="ad-preview-expanded-badge">Vídeo</span>' : '') + '</div></section></div>';
-    state.selectedAdPreview = true;
+    state.selectedAdPreview = { id: adId, name, url, mediaType };
     const closeButton = document.querySelector(".modal-close");
     if (closeButton) closeButton.focus();
   }
@@ -508,7 +510,7 @@
   function closeModal() {
     document.getElementById("modalRoot").innerHTML = "";
     state.selectedCampaign = null;
-    state.selectedAdPreview = false;
+    state.selectedAdPreview = null;
   }
 
   function showToast(message) {
@@ -525,6 +527,7 @@
 
   async function loadReport() {
     const requestId = ++state.requestId;
+    state.previewRefreshAttempted = false;
     state.loading = true;
     state.error = null;
     campaigns = [];
@@ -564,7 +567,58 @@
       if (requestId === state.requestId) {
         state.loading = false;
         render();
+        if (state.platform === "Meta Ads" && metaAds.some(ad => !ad.previewUrl)) {
+          refreshMetaAdPreviews();
+        }
       }
+    }
+  }
+
+  async function refreshMetaAdPreviews() {
+    if (previewRefreshInFlight || state.previewRefreshAttempted || state.platform !== "Meta Ads" || metaAds.length === 0) return;
+    state.previewRefreshAttempted = true;
+    previewRefreshInFlight = true;
+    const requestId = state.requestId;
+    const period = state.period;
+    try {
+      const endpoint = new URL("api/v1/report.php", document.baseURI);
+      endpoint.searchParams.set("period", period);
+      endpoint.searchParams.set("include_meta_ads", "1");
+      endpoint.searchParams.set("refresh_previews", "1");
+      if (period === "custom") {
+        endpoint.searchParams.set("since", state.customSince);
+        endpoint.searchParams.set("until", state.customUntil);
+      }
+      const response = await fetch(endpoint.toString(), {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.data || requestId !== state.requestId || period !== state.period || state.platform !== "Meta Ads") return;
+
+      const refreshedById = new Map(adaptMetaAds(body.data.meta || {}).map(ad => [ad.id, ad]));
+      let changed = false;
+      metaAds = metaAds.map(ad => {
+        const refreshed = refreshedById.get(ad.id);
+        if (!refreshed?.previewUrl) return ad;
+        changed = changed || refreshed.previewUrl !== ad.previewUrl || refreshed.mediaType !== ad.mediaType;
+        return { ...ad, previewUrl: refreshed.previewUrl, mediaType: refreshed.mediaType || ad.mediaType };
+      });
+
+      if (changed) {
+        render();
+        const selectedPreview = state.selectedAdPreview;
+        const refreshedPreview = selectedPreview ? refreshedById.get(selectedPreview.id) : null;
+        if (refreshedPreview?.previewUrl) {
+          showAdPreview(refreshedPreview.name, refreshedPreview.previewUrl, refreshedPreview.mediaType, refreshedPreview.id);
+        }
+      }
+    } catch (error) {
+      showToast("Não foi possível renovar as miniaturas. Clique em Atualizar para tentar novamente.");
+    } finally {
+      previewRefreshInFlight = false;
     }
   }
 
@@ -576,6 +630,7 @@
     if (trigger) trigger.disabled = true;
     const fallback = image.closest(".ad-preview-frame")?.querySelector(".ad-preview-fallback");
     if (fallback) fallback.hidden = false;
+    refreshMetaAdPreviews();
   }, true);
 
   document.addEventListener("click", event => {
@@ -595,7 +650,7 @@
       if (state.platform === "Meta Ads") loadReport();
     }
     if (action === "campaign") showCampaign(actionEl.dataset.id);
-    if (action === "preview-ad") showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType);
+    if (action === "preview-ad") showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType, actionEl.dataset.previewId);
     if (action === "close-modal" && !event.target.closest("[data-modal-content]")) closeModal();
     if (action === "close-modal-button") closeModal();
     if (action === "collapse-sidebar") { state.collapsed = !state.collapsed; render(); }

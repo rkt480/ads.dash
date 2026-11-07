@@ -90,6 +90,7 @@ final class MetaAdsProvider
                     $preview = $creativePreviews[$ad['id']] ?? [];
                     $ad['preview_url'] = $preview['url'] ?? '';
                     $ad['media_type'] = $preview['type'] ?? '';
+                    $ad['video_url'] = $preview['video_url'] ?? '';
                 }
                 unset($ad);
                 $adsStatus = 'connected';
@@ -146,7 +147,12 @@ final class MetaAdsProvider
             $preview = $previews[(string) ($ad['id'] ?? '')] ?? [];
             if (($preview['url'] ?? '') !== '') {
                 $ad['preview_url'] = $preview['url'];
-                $ad['media_type'] = $preview['type'] ?? '';
+            }
+            if (($preview['type'] ?? '') !== '') {
+                $ad['media_type'] = $preview['type'];
+            }
+            if (($preview['video_url'] ?? '') !== '') {
+                $ad['video_url'] = $preview['video_url'];
             }
         }
         unset($ad);
@@ -238,6 +244,7 @@ final class MetaAdsProvider
             'result' => $results[0] ?? ['type' => '', 'value' => 0.0],
             'preview_url' => '',
             'media_type' => '',
+            'video_url' => '',
         ];
     }
 
@@ -398,7 +405,7 @@ final class MetaAdsProvider
         $instagramMediaIds = [];
         foreach ($previews as $adId => $preview) {
             $instagramMediaId = (string) ($preview['instagram_media_id'] ?? '');
-            if (($preview['url'] ?? '') !== '' || $instagramMediaId === '') {
+            if ($instagramMediaId === '') {
                 continue;
             }
             $instagramIdsByAd[$adId] = $instagramMediaId;
@@ -415,12 +422,21 @@ final class MetaAdsProvider
                 );
                 foreach ($instagramIdsByAd as $adId => $mediaId) {
                     $media = $mediaRows[$mediaId] ?? [];
-                    $url = $this->safeMediaUrl($media['thumbnail_url'] ?? '')
-                        ?: $this->safeMediaUrl($media['media_url'] ?? '');
-                    if ($url !== '') {
-                        $previews[$adId]['url'] = $url;
-                        $previews[$adId]['type'] = strtoupper((string) ($media['media_type'] ?? '')) === 'VIDEO'
-                            ? 'video' : 'image';
+                    $isVideo = strtoupper((string) ($media['media_type'] ?? '')) === 'VIDEO';
+                    $mediaUrl = $this->safeMediaUrl($media['media_url'] ?? '');
+                    $thumbnailUrl = $this->safeMediaUrl($media['thumbnail_url'] ?? '');
+                    if ($isVideo) {
+                        $previews[$adId]['type'] = 'video';
+                        if ($mediaUrl !== '') {
+                            $previews[$adId]['video_url'] = $mediaUrl;
+                        }
+                    }
+                    if (($previews[$adId]['url'] ?? '') === '') {
+                        $url = $thumbnailUrl ?: ($isVideo ? '' : $mediaUrl);
+                        if ($url !== '') {
+                            $previews[$adId]['url'] = $url;
+                            $previews[$adId]['type'] = $isVideo ? 'video' : 'image';
+                        }
                     }
                 }
             } catch (UpstreamApiFailure $error) {
@@ -430,27 +446,47 @@ final class MetaAdsProvider
 
         $videoIdsByAd = [];
         foreach ($previews as $adId => $preview) {
-            if (($preview['url'] ?? '') === '' && !empty($preview['video_id'])) {
+            if (!empty($preview['video_id'])) {
                 $videoIdsByAd[$adId] = (string) $preview['video_id'];
+                $previews[$adId]['type'] = 'video';
             }
         }
+        $videoIdsWithoutSource = [];
         foreach (array_chunk(array_values(array_unique($videoIdsByAd)), 50) as $videoIds) {
             try {
-                $videos = $this->graphBatchGet($client, $baseUrl, $token, $videoIds, 'picture,thumbnails');
+                $videos = $this->graphBatchGet($client, $baseUrl, $token, $videoIds, 'source,picture,thumbnails');
                 foreach ($videoIdsByAd as $adId => $videoId) {
-                    if (!empty($previews[$adId]['url'])) {
+                    if (!in_array($videoId, $videoIds, true)) {
                         continue;
                     }
-                    $imageUrl = $this->videoPreviewUrl($videos[$videoId] ?? []);
+                    $video = $videos[$videoId] ?? [];
+                    $sourceUrl = $this->safeMediaUrl($video['source'] ?? '');
+                    if ($sourceUrl !== '') {
+                        $previews[$adId]['video_url'] = $sourceUrl;
+                    }
+                    $imageUrl = $this->videoPreviewUrl($video);
                     if ($imageUrl !== '') {
                         $previews[$adId]['url'] = $imageUrl;
                         $previews[$adId]['type'] = 'video';
                     }
                 }
             } catch (UpstreamApiFailure $error) {
-                // Retry the same nodes with the multi-ID read below.
+                // Retry source lookup with a multi-ID read below.
             }
-            foreach (['id,picture,thumbnails', 'id,picture'] as $fields) {
+            foreach ($videoIdsByAd as $adId => $videoId) {
+                if (!in_array($videoId, $videoIds, true)) {
+                    continue;
+                }
+                if (($previews[$adId]['video_url'] ?? '') === '') {
+                    $videoIdsWithoutSource[$videoId] = true;
+                }
+            }
+        }
+        foreach (array_chunk(array_keys($videoIdsWithoutSource), 50) as $videoIds) {
+            foreach ([
+                'id,source,picture,thumbnails',
+                'id,picture,thumbnails',
+            ] as $fields) {
                 try {
                     $url = $baseUrl . '?' . http_build_query(
                         ['ids' => implode(',', $videoIds), 'fields' => $fields],
@@ -466,32 +502,29 @@ final class MetaAdsProvider
                             continue;
                         }
                         $videoId = (string) ($video['id'] ?? $key);
-                        $imageUrl = $this->safeMediaUrl($video['picture'] ?? '');
-                        $thumbnails = is_array($video['thumbnails'] ?? null)
-                            ? ($video['thumbnails']['data'] ?? $video['thumbnails'])
-                            : [];
-                        if ($imageUrl === '' && is_array($thumbnails)) {
-                            foreach ($thumbnails as $thumbnail) {
-                                if (!is_array($thumbnail)) {
-                                    continue;
-                                }
-                                $imageUrl = $this->safeMediaUrl($thumbnail['uri'] ?? '');
-                                if ($imageUrl !== '') {
-                                    break;
-                                }
-                            }
-                        }
-                        if ($imageUrl !== '') {
-                            $videoImages[$videoId] = $imageUrl;
+                        $sourceUrl = $this->safeMediaUrl($video['source'] ?? '');
+                        $imageUrl = $this->videoPreviewUrl($video);
+                        if ($imageUrl !== '' || $sourceUrl !== '') {
+                            $videoImages[$videoId] = [
+                                'image_url' => $imageUrl,
+                                'video_url' => $sourceUrl,
+                            ];
                         }
                     }
                     foreach ($videoIdsByAd as $adId => $videoId) {
-                        if (empty($previews[$adId]['url']) && isset($videoImages[$videoId])) {
-                            $previews[$adId]['url'] = $videoImages[$videoId];
+                        if (isset($videoImages[$videoId])) {
+                            if ($videoImages[$videoId]['image_url'] !== '') {
+                                $previews[$adId]['url'] = $videoImages[$videoId]['image_url'];
+                            }
+                            if ($videoImages[$videoId]['video_url'] !== '') {
+                                $previews[$adId]['video_url'] = $videoImages[$videoId]['video_url'];
+                            }
                             $previews[$adId]['type'] = 'video';
                         }
                     }
-                    break;
+                    if ($videoImages !== []) {
+                        break;
+                    }
                 } catch (UpstreamApiFailure $error) {
                     // Retry without the optional video thumbnail collection field.
                 }
@@ -591,21 +624,28 @@ final class MetaAdsProvider
 
     private function videoPreviewUrl(array $video): string
     {
-        $url = $this->safeMediaUrl($video['picture'] ?? '');
+        $url = '';
+        $bestArea = -1;
         $thumbnails = is_array($video['thumbnails'] ?? null)
             ? ($video['thumbnails']['data'] ?? $video['thumbnails']) : [];
-        if ($url === '' && is_array($thumbnails)) {
+        if (is_array($thumbnails)) {
             foreach ($thumbnails as $thumbnail) {
                 if (!is_array($thumbnail)) {
                     continue;
                 }
-                $url = $this->safeMediaUrl($thumbnail['uri'] ?? '');
-                if ($url !== '') {
-                    break;
+                $thumbnailUrl = $this->safeMediaUrl($thumbnail['uri'] ?? '');
+                if ($thumbnailUrl === '') {
+                    continue;
+                }
+                $area = max(1, (int) ($thumbnail['width'] ?? 0))
+                    * max(1, (int) ($thumbnail['height'] ?? 0));
+                if ($area > $bestArea) {
+                    $url = $thumbnailUrl;
+                    $bestArea = $area;
                 }
             }
         }
-        return $url;
+        return $url ?: $this->safeMediaUrl($video['picture'] ?? '');
     }
 
     private function normalizeCreativePreview(array $creative): array
@@ -627,11 +667,11 @@ final class MetaAdsProvider
             }
         }
 
-        $url = $this->safeMediaUrl($creative['thumbnail_url'] ?? '')
-            ?: $this->safeMediaUrl($creative['image_url'] ?? '')
+        $url = $this->safeMediaUrl($creative['image_url'] ?? '')
             ?: $this->safeMediaUrl($videoData['image_url'] ?? '')
             ?: $this->safeMediaUrl($linkData['picture'] ?? '')
-            ?: $this->safeMediaUrl($photoData['url'] ?? '');
+            ?: $this->safeMediaUrl($photoData['url'] ?? '')
+            ?: $this->safeMediaUrl($creative['thumbnail_url'] ?? '');
 
         if ($url === '' && is_array($linkData['child_attachments'] ?? null)) {
             foreach ($linkData['child_attachments'] as $attachment) {
@@ -689,6 +729,7 @@ final class MetaAdsProvider
         return [
             'url' => $url,
             'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
+            'video_url' => '',
             'video_id' => $videoId,
             'story_id' => $storyId,
             'instagram_media_id' => (string) ($creative['effective_instagram_media_id'] ?? ''),

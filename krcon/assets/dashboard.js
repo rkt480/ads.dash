@@ -94,6 +94,7 @@
       platform: "Meta Ads",
       previewUrl: String(row.preview_url || ""),
       mediaType: String(row.media_type || ""),
+      videoUrl: String(row.video_url || ""),
       result: row.result && typeof row.result === "object" ? {
         type: String(row.result.type || ""),
         value: Number(row.result.value) || 0
@@ -386,8 +387,12 @@
   function metaAdPreviewCell(ad) {
     const alt = "Prévia do anúncio: " + ad.name;
     const fallback = '<span class="ad-preview-fallback">Prévia indisponível</span>';
-    const media = ad.previewUrl
-      ? '<button class="ad-preview-trigger" type="button" data-action="preview-ad" data-preview-id="' + escapeHtml(ad.id) + '" data-preview-url="' + escapeHtml(ad.previewUrl) + '" data-preview-type="' + escapeHtml(ad.mediaType) + '" data-preview-name="' + escapeHtml(ad.name) + '" aria-label="Ampliar prévia do anúncio: ' + escapeHtml(ad.name) + '" title="Clique para ampliar"><img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span></button>'
+    const hasMedia = ad.previewUrl || (ad.mediaType === "video" && ad.videoUrl);
+    const previewContent = ad.previewUrl
+      ? '<img class="ad-preview-image" src="' + escapeHtml(ad.previewUrl) + '" alt="' + escapeHtml(alt) + '" loading="lazy"><span class="ad-preview-fallback" hidden>Prévia indisponível</span>'
+      : '<span class="ad-preview-fallback">Abrir vídeo</span>';
+    const media = hasMedia
+      ? '<button class="ad-preview-trigger" type="button" data-action="preview-ad" data-preview-id="' + escapeHtml(ad.id) + '" data-preview-url="' + escapeHtml(ad.previewUrl) + '" data-preview-video-url="' + escapeHtml(ad.videoUrl) + '" data-preview-type="' + escapeHtml(ad.mediaType) + '" data-preview-name="' + escapeHtml(ad.name) + '" aria-label="' + (ad.mediaType === "video" ? 'Reproduzir vídeo: ' : 'Ampliar prévia do anúncio: ') + escapeHtml(ad.name) + '" title="' + (ad.mediaType === "video" ? 'Clique para assistir' : 'Clique para ampliar') + '">' + previewContent + '</button>'
       : fallback;
     const videoBadge = ad.mediaType === "video" ? '<span class="ad-video-badge">Vídeo</span>' : '';
     return '<td class="ad-preview-cell"><div class="ad-preview-details"><div class="ad-preview-frame">' + media + videoBadge + '</div>'
@@ -498,11 +503,17 @@
     if (closeButton) closeButton.focus();
   }
 
-  function showAdPreview(name, url, mediaType, adId) {
-    if (!url) return;
+  function showAdPreview(name, url, mediaType, adId, videoUrl) {
     const isVideo = mediaType === "video";
-    document.getElementById("modalRoot").innerHTML = '<div class="modal-backdrop" data-action="close-modal"><section class="campaign-modal ad-preview-modal" role="dialog" aria-modal="true" aria-labelledby="adPreviewTitle" data-modal-content><div class="modal-header"><div><h2 class="modal-title" id="adPreviewTitle">' + escapeHtml(name) + '</h2><p class="modal-subtitle">' + (isVideo ? 'Miniatura do vídeo' : 'Imagem do anúncio') + '</p></div><button class="icon-button modal-close" type="button" aria-label="Fechar prévia" data-action="close-modal-button">✕</button></div><div class="ad-preview-modal-body"><img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<span class="ad-preview-expanded-badge">Vídeo</span>' : '') + '</div></section></div>';
-    state.selectedAdPreview = { id: adId, name, url, mediaType };
+    if (!url && !(isVideo && videoUrl)) return;
+    const playbackFallback = '<div class="ad-preview-playback-fallback" hidden>'
+      + (url ? '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Miniatura do vídeo: ' + escapeHtml(name) + '">' : '')
+      + '<p>' + (videoUrl ? 'Não foi possível reproduzir este vídeo.' : 'A Meta disponibilizou somente a miniatura deste vídeo.') + '</p></div>';
+    const media = isVideo && videoUrl
+      ? '<video class="ad-preview-expanded ad-preview-video" controls playsinline preload="metadata" poster="' + escapeHtml(url) + '" aria-label="Vídeo do anúncio: ' + escapeHtml(name) + '" data-ad-id="' + escapeHtml(adId) + '"><source src="' + escapeHtml(videoUrl) + '"></video>' + playbackFallback
+      : '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<p class="ad-preview-media-note">A Meta disponibilizou somente a miniatura deste vídeo.</p>' : '');
+    document.getElementById("modalRoot").innerHTML = '<div class="modal-backdrop" data-action="close-modal"><section class="campaign-modal ad-preview-modal" role="dialog" aria-modal="true" aria-labelledby="adPreviewTitle" data-modal-content><div class="modal-header"><div><h2 class="modal-title" id="adPreviewTitle">' + escapeHtml(name) + '</h2><p class="modal-subtitle">' + (isVideo ? (videoUrl ? 'Vídeo do anúncio' : 'Miniatura do vídeo') : 'Imagem do anúncio') + '</p></div><button class="icon-button modal-close" type="button" aria-label="Fechar prévia" data-action="close-modal-button">✕</button></div><div class="ad-preview-modal-body">' + media + '</div></section></div>';
+    state.selectedAdPreview = { id: adId, name, url, mediaType, videoUrl };
     const closeButton = document.querySelector(".modal-close");
     if (closeButton) closeButton.focus();
   }
@@ -602,17 +613,23 @@
       let changed = false;
       metaAds = metaAds.map(ad => {
         const refreshed = refreshedById.get(ad.id);
-        if (!refreshed?.previewUrl) return ad;
-        changed = changed || refreshed.previewUrl !== ad.previewUrl || refreshed.mediaType !== ad.mediaType;
-        return { ...ad, previewUrl: refreshed.previewUrl, mediaType: refreshed.mediaType || ad.mediaType };
+        if (!refreshed || (!refreshed.previewUrl && !refreshed.videoUrl)) return ad;
+        changed = changed || refreshed.previewUrl !== ad.previewUrl
+          || refreshed.mediaType !== ad.mediaType || refreshed.videoUrl !== ad.videoUrl;
+        return {
+          ...ad,
+          previewUrl: refreshed.previewUrl || ad.previewUrl,
+          mediaType: refreshed.mediaType || ad.mediaType,
+          videoUrl: refreshed.videoUrl || ad.videoUrl
+        };
       });
 
       if (changed) {
         render();
         const selectedPreview = state.selectedAdPreview;
         const refreshedPreview = selectedPreview ? refreshedById.get(selectedPreview.id) : null;
-        if (refreshedPreview?.previewUrl) {
-          showAdPreview(refreshedPreview.name, refreshedPreview.previewUrl, refreshedPreview.mediaType, refreshedPreview.id);
+        if (refreshedPreview?.previewUrl || refreshedPreview?.videoUrl) {
+          showAdPreview(refreshedPreview.name, refreshedPreview.previewUrl, refreshedPreview.mediaType, refreshedPreview.id, refreshedPreview.videoUrl);
         }
       }
     } catch (error) {
@@ -624,13 +641,21 @@
 
   document.addEventListener("error", event => {
     const image = event.target;
-    if (!(image instanceof HTMLImageElement) || !image.classList.contains("ad-preview-image")) return;
-    image.hidden = true;
-    const trigger = image.closest(".ad-preview-trigger");
-    if (trigger) trigger.disabled = true;
-    const fallback = image.closest(".ad-preview-frame")?.querySelector(".ad-preview-fallback");
-    if (fallback) fallback.hidden = false;
-    refreshMetaAdPreviews();
+    if (image instanceof HTMLImageElement && image.classList.contains("ad-preview-image")) {
+      image.hidden = true;
+      const trigger = image.closest(".ad-preview-trigger");
+      if (trigger) trigger.disabled = true;
+      const fallback = image.closest(".ad-preview-frame")?.querySelector(".ad-preview-fallback");
+      if (fallback) fallback.hidden = false;
+      refreshMetaAdPreviews();
+      return;
+    }
+    if (image instanceof HTMLVideoElement && image.classList.contains("ad-preview-video")) {
+      image.hidden = true;
+      const fallback = image.closest(".ad-preview-modal-body")?.querySelector(".ad-preview-playback-fallback");
+      if (fallback) fallback.hidden = false;
+      refreshMetaAdPreviews();
+    }
   }, true);
 
   document.addEventListener("click", event => {
@@ -650,7 +675,10 @@
       if (state.platform === "Meta Ads") loadReport();
     }
     if (action === "campaign") showCampaign(actionEl.dataset.id);
-    if (action === "preview-ad") showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType, actionEl.dataset.previewId);
+    if (action === "preview-ad") {
+      showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType, actionEl.dataset.previewId, actionEl.dataset.previewVideoUrl);
+      if (actionEl.dataset.previewType === "video" && !actionEl.dataset.previewVideoUrl) refreshMetaAdPreviews();
+    }
     if (action === "close-modal" && !event.target.closest("[data-modal-content]")) closeModal();
     if (action === "close-modal-button") closeModal();
     if (action === "collapse-sidebar") { state.collapsed = !state.collapsed; render(); }

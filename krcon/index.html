@@ -269,6 +269,11 @@
     .ad-preview-modal-body { position: relative; display: grid; min-height: 150px; max-height: calc(100vh - 140px); padding: 16px; place-items: center; overflow: auto; background: #141b26; }
     .ad-preview-expanded { display: block; width: min(100%, 820px); max-height: calc(100vh - 180px); object-fit: contain; }
     .ad-preview-video { background: #000; }
+    .ad-carousel-arrow { align-self: center; padding: 8px 13px; border: 0; border-radius: 8px; color: #fff; background: #354358; cursor: pointer; font-size: 28px; }
+    .ad-carousel-count { color: #fff; font-size: 12px; }
+    .ad-preview-modal-body:has(.ad-carousel-image) { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; }
+    .ad-carousel-image { width: 100%; }
+    .ad-carousel-count { grid-column: 1 / -1; text-align: center; }
     .ad-preview-playback-fallback { display: grid; gap: 10px; justify-items: center; color: #fff; text-align: center; }
     .ad-preview-playback-fallback[hidden] { display: none; }
     .ad-preview-playback-fallback p, .ad-preview-media-note { margin: 0; color: #d2d9e3; font-size: 11px; line-height: 1.5; text-align: center; }
@@ -494,6 +499,6 @@
   </div>
   <div id="modalRoot"></div>
 
-  <script src="assets/dashboard.js?v=ad-preview-media-4" defer></script>
+  <script src="assets/dashboard.js?v=ad-carousel-5" defer></script>
 </body>
 </html>

@@ -91,6 +91,7 @@ final class MetaAdsProvider
                     $ad['preview_url'] = $preview['url'] ?? '';
                     $ad['media_type'] = $preview['type'] ?? '';
                     $ad['video_url'] = $preview['video_url'] ?? '';
+                    $ad['carousel_cards'] = $preview['carousel_cards'] ?? [];
                 }
                 unset($ad);
                 $adsStatus = 'connected';
@@ -153,6 +154,9 @@ final class MetaAdsProvider
             }
             if (($preview['video_url'] ?? '') !== '') {
                 $ad['video_url'] = $preview['video_url'];
+            }
+            if (!empty($preview['carousel_cards'])) {
+                $ad['carousel_cards'] = $preview['carousel_cards'];
             }
         }
         unset($ad);
@@ -245,6 +249,7 @@ final class MetaAdsProvider
             'preview_url' => '',
             'media_type' => '',
             'video_url' => '',
+            'carousel_cards' => [],
         ];
     }
 
@@ -673,7 +678,8 @@ final class MetaAdsProvider
             ?: $this->safeMediaUrl($photoData['url'] ?? '')
             ?: $this->safeMediaUrl($creative['thumbnail_url'] ?? '');
 
-        if ($url === '' && is_array($linkData['child_attachments'] ?? null)) {
+        $carouselCards = [];
+        if (is_array($linkData['child_attachments'] ?? null)) {
             foreach ($linkData['child_attachments'] as $attachment) {
                 if (!is_array($attachment)) {
                     continue;
@@ -682,10 +688,13 @@ final class MetaAdsProvider
                 if ($attachmentHash !== '') {
                     $imageHashes[$attachmentHash] = true;
                 }
-                $url = $this->safeMediaUrl($attachment['picture'] ?? '')
-                    ?: $this->safeMediaUrl($attachment['image_url'] ?? '');
-                if ($url !== '') {
-                    break;
+                $cardUrl = $this->safeMediaUrl($attachment['image_url'] ?? '')
+                    ?: $this->safeMediaUrl($attachment['picture'] ?? '');
+                if ($cardUrl !== '') {
+                    $carouselCards[] = ['url' => $cardUrl];
+                    if ($url === '') {
+                        $url = $cardUrl;
+                    }
                 }
             }
         }
@@ -730,6 +739,7 @@ final class MetaAdsProvider
             'url' => $url,
             'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
             'video_url' => '',
+            'carousel_cards' => $carouselCards,
             'video_id' => $videoId,
             'story_id' => $storyId,
             'instagram_media_id' => (string) ($creative['effective_instagram_media_id'] ?? ''),

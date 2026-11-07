@@ -95,6 +95,7 @@
       previewUrl: String(row.preview_url || ""),
       mediaType: String(row.media_type || ""),
       videoUrl: String(row.video_url || ""),
+      carouselCards: Array.isArray(row.carousel_cards) ? row.carousel_cards.map(card => String(card.url || "")).filter(Boolean) : [],
       result: row.result && typeof row.result === "object" ? {
         type: String(row.result.type || ""),
         value: Number(row.result.value) || 0
@@ -505,15 +506,22 @@
 
   function showAdPreview(name, url, mediaType, adId, videoUrl) {
     const isVideo = mediaType === "video";
+    const cards = metaAds.find(ad => ad.id === adId)?.carouselCards || [];
     if (!url && !(isVideo && videoUrl)) return;
     const playbackFallback = '<div class="ad-preview-playback-fallback" hidden>'
       + (url ? '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Miniatura do vídeo: ' + escapeHtml(name) + '">' : '')
       + '<p>' + (videoUrl ? 'Não foi possível reproduzir este vídeo.' : 'A Meta disponibilizou somente a miniatura deste vídeo.') + '</p></div>';
-    const media = isVideo && videoUrl
+    let media = isVideo && videoUrl
       ? '<video class="ad-preview-expanded ad-preview-video" controls playsinline preload="metadata" poster="' + escapeHtml(url) + '" aria-label="Vídeo do anúncio: ' + escapeHtml(name) + '" data-ad-id="' + escapeHtml(adId) + '"><source src="' + escapeHtml(videoUrl) + '"></video>' + playbackFallback
       : '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<p class="ad-preview-media-note">A Meta disponibilizou somente a miniatura deste vídeo.</p>' : '');
+    if (cards.length > 1) {
+      media = '<button class="ad-carousel-arrow" type="button" data-action="carousel-prev" aria-label="Card anterior">‹</button>'
+        + '<img class="ad-preview-expanded ad-carousel-image" src="' + escapeHtml(cards[0]) + '" alt="Card 1 de ' + cards.length + ': ' + escapeHtml(name) + '">'
+        + '<button class="ad-carousel-arrow" type="button" data-action="carousel-next" aria-label="Próximo card">›</button>'
+        + '<span class="ad-carousel-count">1 / ' + cards.length + '</span>';
+    }
     document.getElementById("modalRoot").innerHTML = '<div class="modal-backdrop" data-action="close-modal"><section class="campaign-modal ad-preview-modal" role="dialog" aria-modal="true" aria-labelledby="adPreviewTitle" data-modal-content><div class="modal-header"><div><h2 class="modal-title" id="adPreviewTitle">' + escapeHtml(name) + '</h2><p class="modal-subtitle">' + (isVideo ? (videoUrl ? 'Vídeo do anúncio' : 'Miniatura do vídeo') : 'Imagem do anúncio') + '</p></div><button class="icon-button modal-close" type="button" aria-label="Fechar prévia" data-action="close-modal-button">✕</button></div><div class="ad-preview-modal-body">' + media + '</div></section></div>';
-    state.selectedAdPreview = { id: adId, name, url, mediaType, videoUrl };
+    state.selectedAdPreview = { id: adId, name, url, mediaType, videoUrl, cards, cardIndex: 0 };
     const closeButton = document.querySelector(".modal-close");
     if (closeButton) closeButton.focus();
   }
@@ -615,12 +623,14 @@
         const refreshed = refreshedById.get(ad.id);
         if (!refreshed || (!refreshed.previewUrl && !refreshed.videoUrl)) return ad;
         changed = changed || refreshed.previewUrl !== ad.previewUrl
-          || refreshed.mediaType !== ad.mediaType || refreshed.videoUrl !== ad.videoUrl;
+          || refreshed.mediaType !== ad.mediaType || refreshed.videoUrl !== ad.videoUrl
+          || JSON.stringify(refreshed.carouselCards) !== JSON.stringify(ad.carouselCards);
         return {
           ...ad,
           previewUrl: refreshed.previewUrl || ad.previewUrl,
           mediaType: refreshed.mediaType || ad.mediaType,
-          videoUrl: refreshed.videoUrl || ad.videoUrl
+          videoUrl: refreshed.videoUrl || ad.videoUrl,
+          carouselCards: refreshed.carouselCards.length ? refreshed.carouselCards : ad.carouselCards
         };
       });
 
@@ -675,6 +685,14 @@
       if (state.platform === "Meta Ads") loadReport();
     }
     if (action === "campaign") showCampaign(actionEl.dataset.id);
+    if ((action === "carousel-prev" || action === "carousel-next") && state.selectedAdPreview?.cards.length > 1) {
+      const selected = state.selectedAdPreview;
+      selected.cardIndex = (selected.cardIndex + (action === "carousel-next" ? 1 : -1) + selected.cards.length) % selected.cards.length;
+      const img = document.querySelector(".ad-carousel-image");
+      if (img) { img.src = selected.cards[selected.cardIndex]; img.alt = "Card " + (selected.cardIndex + 1) + " de " + selected.cards.length + ": " + selected.name; }
+      const count = document.querySelector(".ad-carousel-count");
+      if (count) count.textContent = (selected.cardIndex + 1) + " / " + selected.cards.length;
+    }
     if (action === "preview-ad") {
       showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType, actionEl.dataset.previewId, actionEl.dataset.previewVideoUrl);
       if (actionEl.dataset.previewType === "video" && !actionEl.dataset.previewVideoUrl) refreshMetaAdPreviews();

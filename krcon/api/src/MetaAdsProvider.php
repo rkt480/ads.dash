@@ -324,7 +324,8 @@ final class MetaAdsProvider
         $imageHashesByAd = [];
         $imageHashes = [];
         foreach ($previews as $adId => $preview) {
-            if (($preview['url'] ?? '') !== '' || empty($preview['image_hashes'])) {
+            if (empty($preview['image_hashes'])
+                || (($preview['url'] ?? '') !== '' && empty($preview['carousel_cards']))) {
                 continue;
             }
             $imageHashesByAd[$adId] = $preview['image_hashes'];
@@ -357,6 +358,16 @@ final class MetaAdsProvider
                     }
                 }
                 foreach ($imageHashesByAd as $adId => $adHashes) {
+                    foreach ($previews[$adId]['carousel_cards'] ?? [] as $cardIndex => $card) {
+                        $cardHash = (string) ($card['hash'] ?? '');
+                        if (isset($imageUrlsByHash[$cardHash])) {
+                            $previews[$adId]['carousel_cards'][$cardIndex]['url'] = $imageUrlsByHash[$cardHash];
+                        }
+                    }
+                    if (count($previews[$adId]['carousel_cards'] ?? []) > 1
+                        && ($previews[$adId]['carousel_cards'][0]['url'] ?? '') !== '') {
+                        $previews[$adId]['url'] = $previews[$adId]['carousel_cards'][0]['url'];
+                    }
                     if (!empty($previews[$adId]['url'])) {
                         continue;
                     }
@@ -378,7 +389,7 @@ final class MetaAdsProvider
         $storyIds = [];
         foreach ($previews as $adId => $preview) {
             $storyId = (string) ($preview['story_id'] ?? '');
-            if (($preview['url'] ?? '') !== '' || $storyId === '') {
+            if ($storyId === '') {
                 continue;
             }
             $storyIdsByAd[$adId] = $storyId;
@@ -395,8 +406,13 @@ final class MetaAdsProvider
                 );
                 foreach ($storyIdsByAd as $adId => $storyId) {
                     $story = $storyRows[$storyId] ?? [];
+                    $storyCards = $this->storyCarouselCards($story);
+                    if (count($storyCards) > count($previews[$adId]['carousel_cards'] ?? [])) {
+                        $previews[$adId]['carousel_cards'] = $storyCards;
+                        $previews[$adId]['url'] = $storyCards[0]['url'];
+                    }
                     $url = $this->storyPreviewUrl($story);
-                    if ($url !== '') {
+                    if (($previews[$adId]['url'] ?? '') === '' && $url !== '') {
                         $previews[$adId]['url'] = $url;
                         $previews[$adId]['type'] = $previews[$adId]['type'] ?: 'image';
                     }
@@ -627,6 +643,36 @@ final class MetaAdsProvider
         return $url;
     }
 
+    private function storyCarouselCards(array $story): array
+    {
+        $attachments = is_array($story['attachments']['data'] ?? null)
+            ? $story['attachments']['data'] : [];
+        foreach ($attachments as $attachment) {
+            if (!is_array($attachment)) {
+                continue;
+            }
+            $subattachments = is_array($attachment['subattachments']['data'] ?? null)
+                ? $attachment['subattachments']['data'] : [];
+            $cards = [];
+            foreach ($subattachments as $subattachment) {
+                if (!is_array($subattachment)) {
+                    continue;
+                }
+                $media = is_array($subattachment['media'] ?? null) ? $subattachment['media'] : [];
+                $image = is_array($media['image'] ?? null) ? $media['image'] : [];
+                $url = $this->safeMediaUrl($image['src'] ?? '')
+                    ?: $this->safeMediaUrl($media['thumbnail']['src'] ?? '');
+                if ($url !== '') {
+                    $cards[] = ['url' => $url];
+                }
+            }
+            if (count($cards) > 1) {
+                return $cards;
+            }
+        }
+        return [];
+    }
+
     private function videoPreviewUrl(array $video): string
     {
         $url = '';
@@ -690,8 +736,8 @@ final class MetaAdsProvider
                 }
                 $cardUrl = $this->safeMediaUrl($attachment['image_url'] ?? '')
                     ?: $this->safeMediaUrl($attachment['picture'] ?? '');
-                if ($cardUrl !== '') {
-                    $carouselCards[] = ['url' => $cardUrl];
+                if ($cardUrl !== '' || $attachmentHash !== '') {
+                    $carouselCards[] = ['url' => $cardUrl, 'hash' => $attachmentHash];
                     if ($url === '') {
                         $url = $cardUrl;
                     }

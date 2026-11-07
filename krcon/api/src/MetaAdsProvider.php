@@ -321,6 +321,64 @@ final class MetaAdsProvider
             }
         }
 
+        // Existing-post and dynamic carousels may omit their cards from the ad expansion.
+        $creativeIdsByAd = [];
+        foreach ($reportAds as $ad) {
+            $adId = (string) ($ad['id'] ?? '');
+            $preview = $previews[$adId] ?? [];
+            $name = (string) ($ad['name'] ?? '');
+            if (count($preview['carousel_cards'] ?? []) < 2
+                && ($preview['is_carousel'] ?? false || preg_match('/carrossel|carousel/i', $name))
+                && ($preview['creative_id'] ?? '') !== '') {
+                $creativeIdsByAd[$adId] = $preview['creative_id'];
+            }
+        }
+        if ($creativeIdsByAd !== []) {
+            try {
+                $creatives = $this->graphBatchGet(
+                    $client,
+                    $baseUrl,
+                    $token,
+                    array_values(array_unique($creativeIdsByAd)),
+                    'id,object_type,object_story_spec,asset_feed_spec,image_url,thumbnail_url,effective_object_story_id,object_story_id'
+                );
+                $missingCreativeIds = array_values(array_diff(
+                    array_values(array_unique($creativeIdsByAd)),
+                    array_keys($creatives)
+                ));
+                if ($missingCreativeIds !== []) {
+                    $creatives += $this->graphBatchGet(
+                        $client,
+                        $baseUrl,
+                        $token,
+                        $missingCreativeIds,
+                        'id,object_type,object_story_spec,image_url,thumbnail_url,effective_object_story_id,object_story_id'
+                    );
+                }
+                foreach ($creativeIdsByAd as $adId => $creativeId) {
+                    if (!isset($creatives[$creativeId])) {
+                        continue;
+                    }
+                    $detail = $this->normalizeCreativePreview($creatives[$creativeId], true);
+                    if (count($detail['carousel_cards']) > count($previews[$adId]['carousel_cards'] ?? [])) {
+                        $previews[$adId]['carousel_cards'] = $detail['carousel_cards'];
+                        if (($detail['carousel_cards'][0]['url'] ?? '') !== '') {
+                            $previews[$adId]['url'] = $detail['carousel_cards'][0]['url'];
+                        }
+                    }
+                    if (($previews[$adId]['story_id'] ?? '') === '') {
+                        $previews[$adId]['story_id'] = $detail['story_id'];
+                    }
+                    $previews[$adId]['image_hashes'] = array_values(array_unique(array_merge(
+                        $previews[$adId]['image_hashes'] ?? [],
+                        $detail['image_hashes']
+                    )));
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Keep the creative media already available in the report.
+            }
+        }
+
         $imageHashesByAd = [];
         $imageHashes = [];
         foreach ($previews as $adId => $preview) {
@@ -419,6 +477,31 @@ final class MetaAdsProvider
                 }
             } catch (UpstreamApiFailure $error) {
                 // Existing-post ads may not expose post media to this token.
+            }
+        }
+
+        $unresolvedCarouselStories = [];
+        foreach ($reportAds as $ad) {
+            $adId = (string) ($ad['id'] ?? '');
+            $preview = $previews[$adId] ?? [];
+            if (count($preview['carousel_cards'] ?? []) < 2
+                && ($preview['is_carousel'] ?? false
+                    || preg_match('/carrossel|carousel/i', (string) ($ad['name'] ?? '')))
+                && ($preview['story_id'] ?? '') !== '') {
+                $unresolvedCarouselStories[$adId] = $preview['story_id'];
+            }
+        }
+        foreach (array_slice($unresolvedCarouselStories, 0, 5, true) as $adId => $storyId) {
+            try {
+                $url = $baseUrl . rawurlencode($storyId) . '/attachments?fields=media,subattachments';
+                $attachments = $client->getJson($url, ['Authorization: Bearer ' . $token], 8);
+                $cards = $this->storyCarouselCards(['attachments' => $attachments]);
+                if (count($cards) > 1) {
+                    $previews[$adId]['carousel_cards'] = $cards;
+                    $previews[$adId]['url'] = $cards[0]['url'];
+                }
+            } catch (UpstreamApiFailure $error) {
+                // Some existing posts do not expose their attachments to this token.
             }
         }
 
@@ -647,9 +730,17 @@ final class MetaAdsProvider
     {
         $attachments = is_array($story['attachments']['data'] ?? null)
             ? $story['attachments']['data'] : [];
+        $topLevelCards = [];
         foreach ($attachments as $attachment) {
             if (!is_array($attachment)) {
                 continue;
+            }
+            $attachmentMedia = is_array($attachment['media'] ?? null) ? $attachment['media'] : [];
+            $attachmentImage = is_array($attachmentMedia['image'] ?? null) ? $attachmentMedia['image'] : [];
+            $attachmentUrl = $this->safeMediaUrl($attachmentImage['src'] ?? '')
+                ?: $this->safeMediaUrl($attachmentMedia['thumbnail']['src'] ?? '');
+            if ($attachmentUrl !== '') {
+                $topLevelCards[] = ['url' => $attachmentUrl];
             }
             $subattachments = is_array($attachment['subattachments']['data'] ?? null)
                 ? $attachment['subattachments']['data'] : [];
@@ -670,7 +761,7 @@ final class MetaAdsProvider
                 return $cards;
             }
         }
-        return [];
+        return count($topLevelCards) > 1 ? $topLevelCards : [];
     }
 
     private function videoPreviewUrl(array $video): string
@@ -699,11 +790,13 @@ final class MetaAdsProvider
         return $url ?: $this->safeMediaUrl($video['picture'] ?? '');
     }
 
-    private function normalizeCreativePreview(array $creative): array
+    private function normalizeCreativePreview(array $creative, bool $preferCarousel = false): array
     {
         $story = is_array($creative['object_story_spec'] ?? null) ? $creative['object_story_spec'] : [];
         $videoData = is_array($story['video_data'] ?? null) ? $story['video_data'] : [];
-        $linkData = is_array($story['link_data'] ?? null) ? $story['link_data'] : [];
+        $linkData = is_array($story['link_data'] ?? null)
+            ? $story['link_data']
+            : (is_array($story['template_data'] ?? null) ? $story['template_data'] : []);
         $photoData = is_array($story['photo_data'] ?? null) ? $story['photo_data'] : [];
         $assetFeed = is_array($creative['asset_feed_spec'] ?? null) ? $creative['asset_feed_spec'] : [];
         $imageHashes = [];
@@ -741,6 +834,26 @@ final class MetaAdsProvider
                     if ($url === '') {
                         $url = $cardUrl;
                     }
+                }
+            }
+        }
+
+        $isCarousel = strtoupper((string) ($creative['object_type'] ?? '')) === 'MULTI_SHARE';
+        if (count($carouselCards) < 2 && ($preferCarousel || $isCarousel)) {
+            $feedImages = is_array($assetFeed['images'] ?? null) ? $assetFeed['images'] : [];
+            foreach ($feedImages as $asset) {
+                if (!is_array($asset)) {
+                    continue;
+                }
+                $hash = (string) ($asset['hash'] ?? '');
+                $cardUrl = $this->safeMediaUrl($asset['image_url'] ?? '')
+                    ?: $this->safeMediaUrl($asset['url'] ?? '')
+                    ?: $this->safeMediaUrl($asset['thumbnail_url'] ?? '');
+                if ($hash !== '') {
+                    $imageHashes[$hash] = true;
+                }
+                if ($cardUrl !== '' || $hash !== '') {
+                    $carouselCards[] = ['url' => $cardUrl, 'hash' => $hash];
                 }
             }
         }
@@ -786,6 +899,8 @@ final class MetaAdsProvider
             'type' => $isVideo ? 'video' : ($url !== '' ? 'image' : ''),
             'video_url' => '',
             'carousel_cards' => $carouselCards,
+            'creative_id' => (string) ($creative['id'] ?? ''),
+            'is_carousel' => $isCarousel || count($carouselCards) > 1,
             'video_id' => $videoId,
             'story_id' => $storyId,
             'instagram_media_id' => (string) ($creative['effective_instagram_media_id'] ?? ''),

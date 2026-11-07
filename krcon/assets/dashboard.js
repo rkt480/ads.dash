@@ -696,6 +696,8 @@
     if (action === "preview-ad") {
       showAdPreview(actionEl.dataset.previewName, actionEl.dataset.previewUrl, actionEl.dataset.previewType, actionEl.dataset.previewId, actionEl.dataset.previewVideoUrl);
       if (actionEl.dataset.previewType === "video" && !actionEl.dataset.previewVideoUrl) refreshMetaAdPreviews();
+      if (/carrossel|carousel/i.test(actionEl.dataset.previewName || "")
+        && (metaAds.find(ad => ad.id === actionEl.dataset.previewId)?.carouselCards.length || 0) < 2) refreshMetaAdPreviews();
     }
     if (action === "close-modal" && !event.target.closest("[data-modal-content]")) closeModal();
     if (action === "close-modal-button") closeModal();

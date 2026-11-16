@@ -31,6 +31,14 @@
     button { cursor: pointer; }
     button:focus-visible, input:focus-visible, select:focus-visible, tr[tabindex]:focus-visible { outline: 3px solid rgba(73, 121, 238, .4); outline-offset: 2px; }
     .app-shell { min-height: 100vh; }
+    .report-loading { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px; background: rgba(23, 29, 39, .42); }
+    .report-loading[hidden] { display: none; }
+    .report-loading-card { width: min(100%, 360px); padding: 32px 24px; border-radius: 16px; background: #fff; box-shadow: 0 20px 60px rgba(20, 30, 43, .2); text-align: center; }
+    .report-loading-spinner { display: block; width: 42px; height: 42px; margin: 0 auto 20px; border: 4px solid #e2eaf5; border-top-color: var(--blue); border-radius: 50%; animation: report-loading-spin .85s linear infinite; }
+    .report-loading-card strong { display: block; color: var(--ink); font-size: 17px; }
+    .report-loading-card p { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    @keyframes report-loading-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .report-loading-spinner { animation: none; } }
     .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; display: flex; width: 252px; flex-direction: column; padding: 22px 15px 16px; color: #d5deed; background: var(--navy); transition: width .22s ease, transform .22s ease; }
     .brand-row { display: flex; align-items: center; justify-content: space-between; min-height: 40px; padding: 0 5px 0 7px; }
     .brand { display: flex; align-items: center; min-width: 0; color: #fff; text-decoration: none; }
@@ -498,7 +506,10 @@
     </main>
   </div>
   <div id="modalRoot"></div>
+  <div class="report-loading" id="reportLoading" role="status" aria-live="polite" hidden>
+    <div class="report-loading-card"><span class="report-loading-spinner" aria-hidden="true"></span><strong>Consultando dados da Meta e do Google…</strong><p>Isso pode levar cerca de um minuto.</p></div>
+  </div>
 
-  <script src="assets/dashboard.js?v=ad-carousel-7" defer></script>
+  <script src="assets/dashboard.js?v=loading-1" defer></script>
 </body>
 </html>

@@ -459,6 +459,8 @@
   function render() {
     const content = document.getElementById("pageContent");
     if (!content) return;
+    const reportLoading = document.getElementById("reportLoading");
+    if (reportLoading) reportLoading.hidden = !state.loading;
     const customPeriodNotice = state.period === "custom" && !state.customApplied
       ? '<div class="custom-period-notice">Selecione as datas e clique em Aplicar. Os dados exibidos ainda correspondem ao período anterior.</div>'
       : "";

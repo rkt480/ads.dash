@@ -241,6 +241,10 @@ final class MetaAdsProvider
             if ($id === '') {
                 continue;
             }
+            $campaignId = (string) ($node['campaign_id'] ?? '');
+            if (!isset($campaignsById[$campaignId]) && !isset($adsById[$id])) {
+                continue;
+            }
             $creative = is_array($node['creative'] ?? null) ? $node['creative'] : [];
             $preview = $creative !== [] ? $this->normalizeCreativePreview($creative) : [];
             if (isset($adsById[$id])) {
@@ -251,7 +255,6 @@ final class MetaAdsProvider
                 $adsById[$id]['carousel_cards'] = $preview['carousel_cards'] ?? [];
                 continue;
             }
-            $campaignId = (string) ($node['campaign_id'] ?? '');
             $adsById[$id] = $this->normalizeAd([
                 'ad_id' => $id,
                 'ad_name' => $node['name'] ?? 'Anúncio sem nome',
@@ -272,7 +275,7 @@ final class MetaAdsProvider
     private function allAdNodes(ServerHttpClient $client, string $accountId, string $apiVersion, string $token): array
     {
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
-        $params = ['fields' => 'id,name,campaign_id,creative{thumbnail_url,image_url}', 'limit' => '100'];
+        $params = ['fields' => 'id,name,campaign_id', 'limit' => '500'];
         $ads = [];
         $after = null;
         for ($page = 0; $page < 20; $page++) {
@@ -795,12 +798,12 @@ final class MetaAdsProvider
         }
 
         $rows = [];
-        foreach (array_chunk($requests, 50) as $chunkIndex => $requestChunk) {
+        foreach (array_chunk($requests, 20) as $chunkIndex => $requestChunk) {
             $response = $client->postForm(
                 $baseUrl,
                 ['batch' => json_encode($requestChunk, JSON_UNESCAPED_SLASHES)],
                 ['Authorization: Bearer ' . $token],
-                8
+                20
             );
             foreach ($response as $index => $item) {
                 if (!is_array($item) || (int) ($item['code'] ?? 0) < 200 || (int) ($item['code'] ?? 0) >= 300) {
@@ -810,7 +813,7 @@ final class MetaAdsProvider
                 if (!is_array($body) || isset($body['error'])) {
                     continue;
                 }
-                $id = (string) ($body['id'] ?? $requestedIds[$chunkIndex * 50 + $index] ?? '');
+                $id = (string) ($body['id'] ?? $requestedIds[$chunkIndex * 20 + $index] ?? '');
                 if ($id !== '') {
                     $rows[$id] = $body;
                 }

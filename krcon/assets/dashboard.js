@@ -416,7 +416,7 @@
         + '</tbody></table></div>'
       : '<div class="table-empty">' + escapeHtml(emptyMessage) + '</div>';
 
-    return '<section class="card table-card meta-ads-card"><div class="card-heading"><div><h2 class="card-title">Anúncios</h2><p class="card-subtitle">' + integer(metaAds.length) + ' anúncios da conta · métricas no período selecionado</p></div></div>' + table + '</section>';
+    return '<section class="card table-card meta-ads-card"><div class="card-heading"><div><h2 class="card-title">Anúncios</h2><p class="card-subtitle">' + integer(metaAds.length) + ' anúncios das campanhas com dados no período · métricas no período selecionado</p></div></div>' + table + '</section>';
   }
 
   function filteredCampaigns() {

@@ -226,7 +226,13 @@ final class MetaAdsProvider
         foreach ($ads as $ad) {
             $adsById[$ad['id']] = $ad;
         }
-        foreach ($this->allAdNodes($client, $accountId, $apiVersion, $token) as $node) {
+        try {
+            $adNodes = $this->allAdNodes($client, $accountId, $apiVersion, $token);
+        } catch (UpstreamApiFailure $error) {
+            // Insights metrics remain usable when the separate ad catalog is unavailable.
+            $adNodes = [];
+        }
+        foreach ($adNodes as $node) {
             $id = (string) ($node['id'] ?? '');
             if ($id === '') {
                 continue;
@@ -260,20 +266,29 @@ final class MetaAdsProvider
     private function allAdNodes(ServerHttpClient $client, string $accountId, string $apiVersion, string $token): array
     {
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
-        $params = [
-            'fields' => 'id,name,campaign_id,campaign{name},creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
-            'limit' => '500',
-        ];
+        $params = ['fields' => 'id,name,campaign_id,creative{thumbnail_url,image_url}', 'limit' => '100'];
         $ads = [];
         $after = null;
         for ($page = 0; $page < 20; $page++) {
             if ($after !== null) {
                 $params['after'] = $after;
             }
-            $response = $client->getJson(
-                $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986),
-                ['Authorization: Bearer ' . $token]
-            );
+            try {
+                $response = $client->getJson(
+                    $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986),
+                    ['Authorization: Bearer ' . $token]
+                );
+            } catch (UpstreamApiFailure $error) {
+                if ($page !== 0) {
+                    throw $error;
+                }
+                // Some accounts reject expanded creative fields on the ads edge.
+                $params['fields'] = 'id,name,campaign_id';
+                $response = $client->getJson(
+                    $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986),
+                    ['Authorization: Bearer ' . $token]
+                );
+            }
             if (!is_array($response['data'] ?? null)) {
                 throw new UpstreamApiFailure('meta_ads_list_invalid');
             }

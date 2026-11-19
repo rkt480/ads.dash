@@ -417,15 +417,12 @@ final class MetaAdsProvider
             }
         }
 
-        // Existing-post and dynamic carousels may omit their cards from the ad expansion.
+        // The ad expansion often contains only a tiny thumbnail. Read the full creative.
         $creativeIdsByAd = [];
         foreach ($reportAds as $ad) {
             $adId = (string) ($ad['id'] ?? '');
             $preview = $previews[$adId] ?? [];
-            $name = (string) ($ad['name'] ?? '');
-            if (count($preview['carousel_cards'] ?? []) < 2
-                && ($preview['is_carousel'] ?? false || preg_match('/carrossel|carousel/i', $name))
-                && ($preview['creative_id'] ?? '') !== '') {
+            if (($preview['creative_id'] ?? '') !== '') {
                 $creativeIdsByAd[$adId] = $preview['creative_id'];
             }
         }
@@ -436,7 +433,7 @@ final class MetaAdsProvider
                     $baseUrl,
                     $token,
                     array_values(array_unique($creativeIdsByAd)),
-                    'id,object_type,object_story_spec,asset_feed_spec,image_url,thumbnail_url,effective_object_story_id,object_story_id'
+                    'id,object_type,object_story_spec,asset_feed_spec,image_hash,video_id,image_url,thumbnail_url,effective_object_story_id,object_story_id,effective_instagram_media_id'
                 );
                 $missingCreativeIds = array_values(array_diff(
                     array_values(array_unique($creativeIdsByAd)),
@@ -455,7 +452,21 @@ final class MetaAdsProvider
                     if (!isset($creatives[$creativeId])) {
                         continue;
                     }
-                    $detail = $this->normalizeCreativePreview($creatives[$creativeId], true);
+                    $detail = $this->normalizeCreativePreview($creatives[$creativeId]);
+                    if (($detail['video_id'] ?? '') !== '') {
+                        $previews[$adId]['video_id'] = $detail['video_id'];
+                        $previews[$adId]['type'] = 'video';
+                    }
+                    if (($detail['story_id'] ?? '') !== '') {
+                        $previews[$adId]['story_id'] = $detail['story_id'];
+                        $previews[$adId]['story_url'] = $detail['story_url'];
+                    }
+                    if (($detail['instagram_media_id'] ?? '') !== '') {
+                        $previews[$adId]['instagram_media_id'] = $detail['instagram_media_id'];
+                    }
+                    if (($detail['url'] ?? '') !== '' && ($previews[$adId]['url'] ?? '') === '') {
+                        $previews[$adId]['url'] = $detail['url'];
+                    }
                     if (count($detail['carousel_cards']) > count($previews[$adId]['carousel_cards'] ?? [])) {
                         $previews[$adId]['carousel_cards'] = $detail['carousel_cards'];
                         if (($detail['carousel_cards'][0]['url'] ?? '') !== '') {
@@ -555,10 +566,23 @@ final class MetaAdsProvider
                     $baseUrl,
                     $token,
                     array_keys($storyIds),
-                    'full_picture,attachments{media,subattachments}'
+                    'full_picture,attachments{media_type,media,target,subattachments}'
                 );
                 foreach ($storyIdsByAd as $adId => $storyId) {
                     $story = $storyRows[$storyId] ?? [];
+                    foreach (($story['attachments']['data'] ?? []) as $attachment) {
+                        if (!is_array($attachment)) {
+                            continue;
+                        }
+                        if (stripos((string) ($attachment['media_type'] ?? ''), 'video') !== false) {
+                            $previews[$adId]['type'] = 'video';
+                            $targetId = (string) ($attachment['target']['id'] ?? '');
+                            if (preg_match('/^[0-9]+$/D', $targetId)) {
+                                $previews[$adId]['video_id'] = $targetId;
+                            }
+                            break;
+                        }
+                    }
                     $storyCards = $this->storyCarouselCards($story);
                     if (count($storyCards) > count($previews[$adId]['carousel_cards'] ?? [])) {
                         $previews[$adId]['carousel_cards'] = $storyCards;
@@ -727,6 +751,13 @@ final class MetaAdsProvider
                 } catch (UpstreamApiFailure $error) {
                     // Retry without the optional video thumbnail collection field.
                 }
+            }
+        }
+
+        foreach ($reportAds as $ad) {
+            $adId = (string) ($ad['id'] ?? '');
+            if (isset($previews[$adId]) && preg_match('/\b(v[ií]deo|video)\b/iu', (string) ($ad['name'] ?? ''))) {
+                $previews[$adId]['type'] = 'video';
             }
         }
 

@@ -91,10 +91,10 @@ final class MetaAdsProvider
                 }
                 foreach ($ads as &$ad) {
                     $preview = $creativePreviews[$ad['id']] ?? [];
-                    $ad['preview_url'] = $preview['url'] ?? '';
-                    $ad['media_type'] = $preview['type'] ?? '';
-                    $ad['video_url'] = $preview['video_url'] ?? '';
-                    $ad['carousel_cards'] = $preview['carousel_cards'] ?? [];
+                    $ad['preview_url'] = ($preview['url'] ?? '') ?: $ad['preview_url'];
+                    $ad['media_type'] = ($preview['type'] ?? '') ?: $ad['media_type'];
+                    $ad['video_url'] = ($preview['video_url'] ?? '') ?: $ad['video_url'];
+                    $ad['carousel_cards'] = ($preview['carousel_cards'] ?? []) ?: $ad['carousel_cards'];
                 }
                 unset($ad);
                 $adsStatus = 'connected';
@@ -228,7 +228,16 @@ final class MetaAdsProvider
         }
         foreach ($this->allAdNodes($client, $accountId, $apiVersion, $token) as $node) {
             $id = (string) ($node['id'] ?? '');
-            if ($id === '' || isset($adsById[$id])) {
+            if ($id === '') {
+                continue;
+            }
+            $creative = is_array($node['creative'] ?? null) ? $node['creative'] : [];
+            $preview = $creative !== [] ? $this->normalizeCreativePreview($creative) : [];
+            if (isset($adsById[$id])) {
+                $adsById[$id]['preview_url'] = $preview['url'] ?? '';
+                $adsById[$id]['media_type'] = $preview['type'] ?? '';
+                $adsById[$id]['video_url'] = $preview['video_url'] ?? '';
+                $adsById[$id]['carousel_cards'] = $preview['carousel_cards'] ?? [];
                 continue;
             }
             $campaignId = (string) ($node['campaign_id'] ?? '');
@@ -238,6 +247,10 @@ final class MetaAdsProvider
                 'campaign_id' => $campaignId,
                 'campaign_name' => $node['campaign']['name'] ?? null,
             ], $campaignsById[$campaignId] ?? []);
+            $adsById[$id]['preview_url'] = $preview['url'] ?? '';
+            $adsById[$id]['media_type'] = $preview['type'] ?? '';
+            $adsById[$id]['video_url'] = $preview['video_url'] ?? '';
+            $adsById[$id]['carousel_cards'] = $preview['carousel_cards'] ?? [];
         }
         $ads = array_values($adsById);
         usort($ads, static fn (array $left, array $right): int => $right['spend'] <=> $left['spend']);
@@ -247,7 +260,10 @@ final class MetaAdsProvider
     private function allAdNodes(ServerHttpClient $client, string $accountId, string $apiVersion, string $token): array
     {
         $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
-        $params = ['fields' => 'id,name,campaign_id,campaign{name}', 'limit' => '500'];
+        $params = [
+            'fields' => 'id,name,campaign_id,campaign{name},creative{id,thumbnail_url,image_url,image_hash,object_type,video_id,effective_object_story_id,object_story_id,effective_instagram_media_id,object_story_spec}',
+            'limit' => '500',
+        ];
         $ads = [];
         $after = null;
         for ($page = 0; $page < 20; $page++) {
@@ -726,24 +742,26 @@ final class MetaAdsProvider
             return [];
         }
 
-        $response = $client->postForm(
-            $baseUrl,
-            ['batch' => json_encode($requests, JSON_UNESCAPED_SLASHES)],
-            ['Authorization: Bearer ' . $token],
-            8
-        );
         $rows = [];
-        foreach ($response as $index => $item) {
-            if (!is_array($item) || (int) ($item['code'] ?? 0) < 200 || (int) ($item['code'] ?? 0) >= 300) {
-                continue;
-            }
-            $body = json_decode((string) ($item['body'] ?? ''), true);
-            if (!is_array($body) || isset($body['error'])) {
-                continue;
-            }
-            $id = (string) ($body['id'] ?? $requestedIds[$index] ?? '');
-            if ($id !== '') {
-                $rows[$id] = $body;
+        foreach (array_chunk($requests, 50) as $chunkIndex => $requestChunk) {
+            $response = $client->postForm(
+                $baseUrl,
+                ['batch' => json_encode($requestChunk, JSON_UNESCAPED_SLASHES)],
+                ['Authorization: Bearer ' . $token],
+                8
+            );
+            foreach ($response as $index => $item) {
+                if (!is_array($item) || (int) ($item['code'] ?? 0) < 200 || (int) ($item['code'] ?? 0) >= 300) {
+                    continue;
+                }
+                $body = json_decode((string) ($item['body'] ?? ''), true);
+                if (!is_array($body) || isset($body['error'])) {
+                    continue;
+                }
+                $id = (string) ($body['id'] ?? $requestedIds[$chunkIndex * 50 + $index] ?? '');
+                if ($id !== '') {
+                    $rows[$id] = $body;
+                }
             }
         }
         return $rows;

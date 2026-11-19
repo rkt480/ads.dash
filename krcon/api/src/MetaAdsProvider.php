@@ -94,6 +94,7 @@ final class MetaAdsProvider
                     $ad['preview_url'] = ($preview['url'] ?? '') ?: $ad['preview_url'];
                     $ad['media_type'] = ($preview['type'] ?? '') ?: $ad['media_type'];
                     $ad['video_url'] = ($preview['video_url'] ?? '') ?: $ad['video_url'];
+                    $ad['story_url'] = ($preview['story_url'] ?? '') ?: $ad['story_url'];
                     $ad['carousel_cards'] = ($preview['carousel_cards'] ?? []) ?: $ad['carousel_cards'];
                 }
                 unset($ad);
@@ -157,6 +158,9 @@ final class MetaAdsProvider
             }
             if (($preview['video_url'] ?? '') !== '') {
                 $ad['video_url'] = $preview['video_url'];
+            }
+            if (($preview['story_url'] ?? '') !== '') {
+                $ad['story_url'] = $preview['story_url'];
             }
             if (!empty($preview['carousel_cards'])) {
                 $ad['carousel_cards'] = $preview['carousel_cards'];
@@ -243,6 +247,7 @@ final class MetaAdsProvider
                 $adsById[$id]['preview_url'] = $preview['url'] ?? '';
                 $adsById[$id]['media_type'] = $preview['type'] ?? '';
                 $adsById[$id]['video_url'] = $preview['video_url'] ?? '';
+                $adsById[$id]['story_url'] = $preview['story_url'] ?? '';
                 $adsById[$id]['carousel_cards'] = $preview['carousel_cards'] ?? [];
                 continue;
             }
@@ -256,6 +261,7 @@ final class MetaAdsProvider
             $adsById[$id]['preview_url'] = $preview['url'] ?? '';
             $adsById[$id]['media_type'] = $preview['type'] ?? '';
             $adsById[$id]['video_url'] = $preview['video_url'] ?? '';
+            $adsById[$id]['story_url'] = $preview['story_url'] ?? '';
             $adsById[$id]['carousel_cards'] = $preview['carousel_cards'] ?? [];
         }
         $ads = array_values($adsById);
@@ -338,6 +344,7 @@ final class MetaAdsProvider
             'preview_url' => '',
             'media_type' => '',
             'video_url' => '',
+            'story_url' => '',
             'carousel_cards' => [],
         ];
     }
@@ -471,8 +478,7 @@ final class MetaAdsProvider
         $imageHashesByAd = [];
         $imageHashes = [];
         foreach ($previews as $adId => $preview) {
-            if (empty($preview['image_hashes'])
-                || (($preview['url'] ?? '') !== '' && empty($preview['carousel_cards']))) {
+            if (empty($preview['image_hashes'])) {
                 continue;
             }
             $imageHashesByAd[$adId] = $preview['image_hashes'];
@@ -515,7 +521,7 @@ final class MetaAdsProvider
                         && ($previews[$adId]['carousel_cards'][0]['url'] ?? '') !== '') {
                         $previews[$adId]['url'] = $previews[$adId]['carousel_cards'][0]['url'];
                     }
-                    if (!empty($previews[$adId]['url'])) {
+                    if (($previews[$adId]['type'] ?? '') === 'video') {
                         continue;
                     }
                     foreach ($adHashes as $hash) {
@@ -559,7 +565,7 @@ final class MetaAdsProvider
                         $previews[$adId]['url'] = $storyCards[0]['url'];
                     }
                     $url = $this->storyPreviewUrl($story);
-                    if (($previews[$adId]['url'] ?? '') === '' && $url !== '') {
+                    if ($url !== '' && ($previews[$adId]['type'] ?? '') !== 'video') {
                         $previews[$adId]['url'] = $url;
                         $previews[$adId]['type'] = $previews[$adId]['type'] ?: 'image';
                     }
@@ -994,6 +1000,8 @@ final class MetaAdsProvider
             'is_carousel' => $isCarousel || count($carouselCards) > 1,
             'video_id' => $videoId,
             'story_id' => $storyId,
+            'story_url' => preg_match('/^[0-9]+_[0-9]+$/D', $storyId)
+                ? 'https://www.facebook.com/' . $storyId : '',
             'instagram_media_id' => (string) ($creative['effective_instagram_media_id'] ?? ''),
             'image_hashes' => array_keys($imageHashes),
         ];
@@ -1088,6 +1096,7 @@ final class MetaAdsProvider
         return [
             'id' => (string) ($row['campaign_id'] ?? ''),
             'name' => (string) ($row['campaign_name'] ?? 'Campanha sem nome'),
+            'objective' => $objective,
             'platform' => 'Meta Ads',
             'spend' => $this->number($row['spend'] ?? 0),
             'impressions' => (int) $this->number($row['impressions'] ?? 0),

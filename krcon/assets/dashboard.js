@@ -95,6 +95,7 @@
       previewUrl: String(row.preview_url || ""),
       mediaType: String(row.media_type || ""),
       videoUrl: String(row.video_url || ""),
+      storyUrl: String(row.story_url || ""),
       carouselCards: Array.isArray(row.carousel_cards) ? row.carousel_cards.map(card => String(card.url || "")).filter(Boolean) : [],
       result: row.result && typeof row.result === "object" ? {
         type: String(row.result.type || ""),
@@ -508,14 +509,16 @@
 
   function showAdPreview(name, url, mediaType, adId, videoUrl) {
     const isVideo = mediaType === "video";
+    const storyUrl = metaAds.find(ad => ad.id === adId)?.storyUrl || "";
     const cards = metaAds.find(ad => ad.id === adId)?.carouselCards || [];
     if (!url && !(isVideo && videoUrl)) return;
     const playbackFallback = '<div class="ad-preview-playback-fallback" hidden>'
       + (url ? '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Miniatura do vídeo: ' + escapeHtml(name) + '">' : '')
-      + '<p>' + (videoUrl ? 'Não foi possível reproduzir este vídeo.' : 'A Meta disponibilizou somente a miniatura deste vídeo.') + '</p></div>';
+      + '<p>' + (videoUrl ? 'Não foi possível reproduzir este vídeo aqui.' : 'A Meta não forneceu um arquivo de vídeo reproduzível.') + '</p>'
+      + (storyUrl ? '<a href="' + escapeHtml(storyUrl) + '" target="_blank" rel="noopener noreferrer">Assistir na publicação original</a>' : '') + '</div>';
     let media = isVideo && videoUrl
-      ? '<video class="ad-preview-expanded ad-preview-video" controls playsinline preload="metadata" poster="' + escapeHtml(url) + '" aria-label="Vídeo do anúncio: ' + escapeHtml(name) + '" data-ad-id="' + escapeHtml(adId) + '"><source src="' + escapeHtml(videoUrl) + '"></video>' + playbackFallback
-      : '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<p class="ad-preview-media-note">A Meta disponibilizou somente a miniatura deste vídeo.</p>' : '');
+      ? '<video class="ad-preview-expanded ad-preview-video" controls autoplay playsinline preload="metadata" poster="' + escapeHtml(url) + '" aria-label="Vídeo do anúncio: ' + escapeHtml(name) + '" data-ad-id="' + escapeHtml(adId) + '"><source src="' + escapeHtml(videoUrl) + '"></video>' + playbackFallback
+      : '<img class="ad-preview-expanded" src="' + escapeHtml(url) + '" alt="Prévia ampliada do anúncio: ' + escapeHtml(name) + '">' + (isVideo ? '<p class="ad-preview-media-note">A Meta disponibilizou somente a miniatura deste vídeo. ' + (storyUrl ? '<a href="' + escapeHtml(storyUrl) + '" target="_blank" rel="noopener noreferrer">Assistir na publicação original</a>' : '') + '</p>' : '');
     if (cards.length > 1) {
       media = '<button class="ad-carousel-arrow" type="button" data-action="carousel-prev" aria-label="Card anterior">‹</button>'
         + '<img class="ad-preview-expanded ad-carousel-image" src="' + escapeHtml(cards[0]) + '" alt="Card 1 de ' + cards.length + ': ' + escapeHtml(name) + '">'
@@ -632,6 +635,7 @@
           previewUrl: refreshed.previewUrl || ad.previewUrl,
           mediaType: refreshed.mediaType || ad.mediaType,
           videoUrl: refreshed.videoUrl || ad.videoUrl,
+          storyUrl: refreshed.storyUrl || ad.storyUrl,
           carouselCards: refreshed.carouselCards.length ? refreshed.carouselCards : ad.carouselCards
         };
       });

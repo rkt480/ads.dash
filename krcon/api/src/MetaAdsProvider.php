@@ -54,9 +54,12 @@ final class MetaAdsProvider
                 }
             }
 
-            $nextAfter = $response['paging']['cursors']['after'] ?? null;
+            $nextAfter = isset($response['paging']['next']) ? ($response['paging']['cursors']['after'] ?? null) : null;
             if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
                 break;
+            }
+            if ($page === 19) {
+                throw new UpstreamApiFailure('meta_campaign_insights_incomplete');
             }
             $after = $nextAfter;
         }
@@ -209,14 +212,69 @@ final class MetaAdsProvider
                 }
             }
 
-            $nextAfter = $response['paging']['cursors']['after'] ?? null;
+            $nextAfter = isset($response['paging']['next']) ? ($response['paging']['cursors']['after'] ?? null) : null;
             if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
                 break;
+            }
+            if ($page === 19) {
+                throw new UpstreamApiFailure('meta_ad_insights_incomplete');
             }
             $after = $nextAfter;
         }
 
+        $adsById = [];
+        foreach ($ads as $ad) {
+            $adsById[$ad['id']] = $ad;
+        }
+        foreach ($this->allAdNodes($client, $accountId, $apiVersion, $token) as $node) {
+            $id = (string) ($node['id'] ?? '');
+            if ($id === '' || isset($adsById[$id])) {
+                continue;
+            }
+            $campaignId = (string) ($node['campaign_id'] ?? '');
+            $adsById[$id] = $this->normalizeAd([
+                'ad_id' => $id,
+                'ad_name' => $node['name'] ?? 'Anúncio sem nome',
+                'campaign_id' => $campaignId,
+                'campaign_name' => $node['campaign']['name'] ?? null,
+            ], $campaignsById[$campaignId] ?? []);
+        }
+        $ads = array_values($adsById);
         usort($ads, static fn (array $left, array $right): int => $right['spend'] <=> $left['spend']);
+        return $ads;
+    }
+
+    private function allAdNodes(ServerHttpClient $client, string $accountId, string $apiVersion, string $token): array
+    {
+        $baseUrl = 'https://graph.facebook.com/' . $apiVersion . '/act_' . $accountId . '/ads';
+        $params = ['fields' => 'id,name,campaign_id,campaign{name}', 'limit' => '500'];
+        $ads = [];
+        $after = null;
+        for ($page = 0; $page < 20; $page++) {
+            if ($after !== null) {
+                $params['after'] = $after;
+            }
+            $response = $client->getJson(
+                $baseUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986),
+                ['Authorization: Bearer ' . $token]
+            );
+            if (!is_array($response['data'] ?? null)) {
+                throw new UpstreamApiFailure('meta_ads_list_invalid');
+            }
+            foreach ($response['data'] as $row) {
+                if (is_array($row)) {
+                    $ads[] = $row;
+                }
+            }
+            $nextAfter = isset($response['paging']['next']) ? ($response['paging']['cursors']['after'] ?? null) : null;
+            if (!is_string($nextAfter) || $nextAfter === '' || $nextAfter === $after) {
+                return $ads;
+            }
+            if ($page === 19) {
+                throw new UpstreamApiFailure('meta_ads_list_incomplete');
+            }
+            $after = $nextAfter;
+        }
         return $ads;
     }
 
@@ -228,7 +286,7 @@ final class MetaAdsProvider
         $resultType = (string) ($results[0]['type'] ?? '');
         if ($this->isLeadObjective($objective) || $this->isLeadResultType($resultType)) {
             $leadResult = $this->leadResultFromActions($actions);
-            if ($leadResult !== null && ($results === [] || ($results[0]['value'] ?? 0) <= 0)) {
+            if ($leadResult !== null && $leadResult['value'] > 0) {
                 $results = [$leadResult];
             }
         }
@@ -987,7 +1045,7 @@ final class MetaAdsProvider
         $resultType = (string) ($results[0]['type'] ?? '');
         if ($this->isLeadObjective($objective) || $this->isLeadResultType($resultType)) {
             $leadResult = $this->leadResultFromActions($actions);
-            if ($leadResult !== null && ($results === [] || ($results[0]['value'] ?? 0) <= 0)) {
+            if ($leadResult !== null && $leadResult['value'] > 0) {
                 $results = [$leadResult];
             } elseif ($results === [] && $this->isLeadObjective($objective)) {
                 $results = [['type' => 'onsite_conversion.lead_grouped', 'value' => 0.0]];
@@ -1083,7 +1141,10 @@ final class MetaAdsProvider
         $leadTypes = [
             'onsite_conversion.lead_grouped',
             'onsite_conversion.leadgen_grouped',
+            'onsite_conversion.leadgen',
             'onsite_conversion.lead',
+            'leadgen_grouped',
+            'leadgen',
             'lead',
             'offsite_conversion.fb_pixel_lead',
         ];

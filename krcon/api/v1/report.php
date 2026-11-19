@@ -43,7 +43,7 @@ $cacheAccountScope = implode("\0", [
 ]);
 $cacheScopeHash = substr(hash('sha256', $cacheAccountScope), 0, 20);
 $cacheFile = $cacheDirectory . DIRECTORY_SEPARATOR
-    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v14-' . $cachePeriod . '.json';
+    . 'report-' . $tenantSlug . '-' . $cacheScopeHash . '-v15-' . $cachePeriod . '.json';
 $cacheTtl = 300;
 if (is_file($cacheFile) && is_readable($cacheFile)
     && (time() - (int) filemtime($cacheFile)) < $cacheTtl) {
@@ -63,40 +63,6 @@ if (is_file($cacheFile) && is_readable($cacheFile)
             }
         }
         api_json(200, $cached);
-    }
-}
-
-// Reuse recent metrics while refreshing Meta ad media URLs.
-if ($includeMetaAds) {
-    $previousCacheMaxAge = 6 * 60 * 60;
-    foreach (['v13', 'v12', 'v11', 'v10', 'v9', 'v8', 'v7', 'v6'] as $previousVersion) {
-        $previousCacheFile = str_replace('-v14-', '-' . $previousVersion . '-', $cacheFile);
-        if (!is_file($previousCacheFile) || !is_readable($previousCacheFile)
-            || (time() - (int) filemtime($previousCacheFile)) >= $previousCacheMaxAge) {
-            continue;
-        }
-        $previousPayload = json_decode((string) file_get_contents($previousCacheFile), true);
-        $previousReport = is_array($previousPayload['data'] ?? null) ? $previousPayload['data'] : null;
-        if (!is_array($previousReport) || !is_array($previousReport['meta']['ads'] ?? null)) {
-            continue;
-        }
-        $previousReport['meta']['ads'] = (new MetaAdsProvider())->enrichCreativePreviews(
-            $previousReport['meta']['ads']
-        );
-        $payload = ['data' => $previousReport];
-        $hasConnectedPlatform = in_array('connected', $previousReport['integrations'] ?? [], true);
-        $hasUnavailablePlatform = in_array('unavailable', $previousReport['integrations'] ?? [], true);
-        $metaAdsUnavailable = ($previousReport['meta']['ads_status'] ?? '') === 'unavailable';
-        if ($hasConnectedPlatform && !$hasUnavailablePlatform && !$metaAdsUnavailable
-            && is_dir($cacheDirectory) && is_writable($cacheDirectory)) {
-            @file_put_contents(
-                $cacheFile,
-                json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                LOCK_EX
-            );
-            @chmod($cacheFile, 0600);
-        }
-        api_json(200, $payload);
     }
 }
 

@@ -569,13 +569,23 @@ final class MetaAdsProvider
                     $baseUrl,
                     $token,
                     array_keys($storyIds),
-                    'full_picture,attachments{media_type,media,target,subattachments}'
+                    'full_picture,attachments{media_type,media,target,subattachments{media,target}}'
                 );
+                $photoIdsByAd = [];
                 foreach ($storyIdsByAd as $adId => $storyId) {
                     $story = $storyRows[$storyId] ?? [];
+                    $photoIdsByAd[$adId] = [];
                     foreach (($story['attachments']['data'] ?? []) as $attachment) {
                         if (!is_array($attachment)) {
                             continue;
+                        }
+                        $photoAttachments = is_array($attachment['subattachments']['data'] ?? null)
+                            ? $attachment['subattachments']['data'] : [$attachment];
+                        foreach ($photoAttachments as $photoAttachment) {
+                            $photoId = (string) ($photoAttachment['target']['id'] ?? '');
+                            if (preg_match('/^[0-9]+$/D', $photoId)) {
+                                $photoIdsByAd[$adId][] = $photoId;
+                            }
                         }
                         if (stripos((string) ($attachment['media_type'] ?? ''), 'video') !== false) {
                             $previews[$adId]['type'] = 'video';
@@ -595,6 +605,36 @@ final class MetaAdsProvider
                     if ($url !== '' && ($previews[$adId]['type'] ?? '') !== 'video') {
                         $previews[$adId]['url'] = $url;
                         $previews[$adId]['type'] = $previews[$adId]['type'] ?: 'image';
+                    }
+                }
+                $photoIds = array_values(array_unique(array_merge(...array_values($photoIdsByAd))));
+                if ($photoIds !== []) {
+                    try {
+                        $photos = $this->graphBatchGet($client, $baseUrl, $token, $photoIds, 'images');
+                        foreach ($photoIdsByAd as $adId => $ids) {
+                            if (($previews[$adId]['type'] ?? '') === 'video') {
+                                continue;
+                            }
+                            $cards = [];
+                            foreach ($ids as $id) {
+                                $images = is_array($photos[$id]['images'] ?? null) ? $photos[$id]['images'] : [];
+                                usort($images, static fn (array $a, array $b): int =>
+                                    ((int) ($b['width'] ?? 0) * (int) ($b['height'] ?? 0))
+                                    <=> ((int) ($a['width'] ?? 0) * (int) ($a['height'] ?? 0)));
+                                $imageUrl = $this->safeMediaUrl($images[0]['source'] ?? '');
+                                if ($imageUrl !== '') {
+                                    $cards[] = ['url' => $imageUrl];
+                                }
+                            }
+                            if (count($cards) > 1) {
+                                $previews[$adId]['carousel_cards'] = $cards;
+                            }
+                            if ($cards !== []) {
+                                $previews[$adId]['url'] = $cards[0]['url'];
+                            }
+                        }
+                    } catch (UpstreamApiFailure $error) {
+                        // Keep the media already resolved from the post.
                     }
                 }
             } catch (UpstreamApiFailure $error) {
@@ -639,30 +679,63 @@ final class MetaAdsProvider
         }
         if ($instagramMediaIds !== []) {
             try {
-                $mediaRows = $this->graphBatchGet(
-                    $client,
-                    $baseUrl,
-                    $token,
-                    array_keys($instagramMediaIds),
-                    'media_type,media_url,thumbnail_url'
-                );
+                try {
+                    $mediaRows = $this->graphBatchGet(
+                        $client,
+                        $baseUrl,
+                        $token,
+                        array_keys($instagramMediaIds),
+                        'media_type,media_url,thumbnail_url,children{media_type,media_url,thumbnail_url}'
+                    );
+                } catch (UpstreamApiFailure $error) {
+                    $mediaRows = $this->graphBatchGet(
+                        $client,
+                        $baseUrl,
+                        $token,
+                        array_keys($instagramMediaIds),
+                        'media_type,media_url,thumbnail_url'
+                    );
+                }
+                if ($mediaRows === []) {
+                    $mediaRows = $this->graphBatchGet(
+                        $client,
+                        $baseUrl,
+                        $token,
+                        array_keys($instagramMediaIds),
+                        'media_type,media_url,thumbnail_url'
+                    );
+                }
                 foreach ($instagramIdsByAd as $adId => $mediaId) {
                     $media = $mediaRows[$mediaId] ?? [];
                     $isVideo = strtoupper((string) ($media['media_type'] ?? '')) === 'VIDEO';
                     $mediaUrl = $this->safeMediaUrl($media['media_url'] ?? '');
                     $thumbnailUrl = $this->safeMediaUrl($media['thumbnail_url'] ?? '');
+                    $children = is_array($media['children']['data'] ?? null) ? $media['children']['data'] : [];
+                    $fullSizeCards = [];
+                    foreach ($children as $child) {
+                        if (!is_array($child)) {
+                            continue;
+                        }
+                        $cardUrl = $this->safeMediaUrl($child['media_url'] ?? '')
+                            ?: $this->safeMediaUrl($child['thumbnail_url'] ?? '');
+                        if ($cardUrl !== '') {
+                            $fullSizeCards[] = ['url' => $cardUrl];
+                        }
+                    }
+                    if (count($fullSizeCards) > 1) {
+                        $previews[$adId]['carousel_cards'] = $fullSizeCards;
+                        $previews[$adId]['url'] = $fullSizeCards[0]['url'];
+                    }
                     if ($isVideo) {
                         $previews[$adId]['type'] = 'video';
                         if ($mediaUrl !== '') {
                             $previews[$adId]['video_url'] = $mediaUrl;
                         }
                     }
-                    if (($previews[$adId]['url'] ?? '') === '') {
-                        $url = $thumbnailUrl ?: ($isVideo ? '' : $mediaUrl);
-                        if ($url !== '') {
-                            $previews[$adId]['url'] = $url;
-                            $previews[$adId]['type'] = $isVideo ? 'video' : 'image';
-                        }
+                    $url = $isVideo ? $thumbnailUrl : $mediaUrl;
+                    if ($url !== '' && $fullSizeCards === []) {
+                        $previews[$adId]['url'] = $url;
+                        $previews[$adId]['type'] = $isVideo ? 'video' : 'image';
                     }
                 }
             } catch (UpstreamApiFailure $error) {
